@@ -5,7 +5,19 @@ import {
   ManualInputState,
 } from "./manual-input.js";
 import { MockSerialTransport, SerialTransport } from "./serial-transport.js";
-import { Script, ScriptRecorder, ScriptRunner, emptyScript, stepIcon, formatMs } from "./editor.js";
+import {
+  Script,
+  ScriptRecorder,
+  ScriptRunner,
+  emptyScript,
+  stepIcon,
+  formatMs,
+  saveScriptToStorage,
+  loadScriptFromStorage,
+  scriptToJsonUrl,
+  scriptDownloadFilename,
+  scriptFromFileInput,
+} from "./editor.js";
 
 const elements = {
   connectionButton: document.querySelector('[data-testid="connect-button"]'),
@@ -39,6 +51,9 @@ const elements = {
   editorRepeatCheckbox: document.querySelector('[data-testid="editor-repeat"]'),
   editorRecButton: document.querySelector('[data-testid="editor-rec"]'),
   editorRecordingHint: document.querySelector('[data-testid="editor-recording-hint"]'),
+  editorExportButton: document.querySelector('[data-testid="editor-export"]'),
+  editorImportButton: document.querySelector('[data-testid="editor-import"]'),
+  editorImportInput: document.querySelector('[data-testid="editor-import-input"]'),
   editorSteps: document.querySelector('[data-testid="editor-steps"]'),
   editorEmpty: document.querySelector('[data-testid="editor-empty"]'),
 };
@@ -97,11 +112,26 @@ let deviceRoutine = selectedScript;
 
 // In-browser script for the "custom" picker chip. Owned by app.js, mutated
 // by the editor (later commits add recorder + runner wiring).
-const customScript = emptyScript();
+const customScript = (() => {
+  const restored = typeof loadScriptFromStorage === "function"
+    ? loadScriptFromStorage()
+    : null;
+  return restored || emptyScript();
+})();
 const scriptRecorder = new ScriptRecorder(customScript);
 // Stream runner is created lazily on first "运行" click once transport is
 // connected; we keep a single instance per session.
 let streamRunner = null;
+// Debounced auto-save: every edit rerenders the editor card; we save to
+// localStorage at most once per 500 ms so rapid mutations don't thrash.
+let saveTimer = null;
+function scheduleAutoSave() {
+  if (saveTimer !== null) return;
+  saveTimer = window.setTimeout(() => {
+    saveTimer = null;
+    saveScriptToStorage(customScript);
+  }, 500);
+}
 
 const mockMode = new URLSearchParams(window.location.search).get("mock") === "1";
 const TransportClass = mockMode ? MockSerialTransport : SerialTransport;
@@ -131,6 +161,7 @@ function recorderEvent(event) {
   // Only refresh the editor card on press/release/clear so we don't thrash
   // the DOM during multi-source repeated set updates.
   renderEditorCard();
+  if (scriptRecorder.active) scheduleAutoSave();
 }
 
 const manualInputState = new ManualInputState(onManualInputChange, recorderEvent);
@@ -176,6 +207,15 @@ function renderEditorCard() {
   }
   if (elements.editorClearButton) {
     elements.editorClearButton.disabled = steps.length === 0 || scriptRecorder.active;
+  }
+  if (elements.editorExportButton) {
+    elements.editorExportButton.disabled = steps.length === 0 || scriptRecorder.active;
+  }
+  if (elements.editorImportButton) {
+    elements.editorImportButton.disabled = scriptRecorder.active;
+  }
+  if (elements.editorImportInput) {
+    elements.editorImportInput.disabled = scriptRecorder.active;
   }
   if (elements.editorRepeatCheckbox) {
     elements.editorRepeatCheckbox.checked = customScript.repeat;
@@ -238,6 +278,7 @@ function renderStepRow(step, idx) {
     customScript.steps[idx].durationMs = value;
     duration.value = String(value);
     renderEditorCard();
+    scheduleAutoSave();
   });
   li.appendChild(duration);
 
@@ -264,6 +305,7 @@ function stepActionButton(label, action, idx, disabled, modifier = "") {
     else if (action === "dup") customScript.duplicateStep(idx);
     else if (action === "del") customScript.removeStep(idx);
     renderEditorCard();
+    scheduleAutoSave();
   });
   return btn;
 }
@@ -603,6 +645,7 @@ if (elements.editorClearButton) {
     if (!window.confirm("清空脚本会删除所有步骤，确定吗？")) return;
     customScript.clear();
     renderEditorCard();
+    scheduleAutoSave();
     if (elements.customSummary) {
       elements.customSummary.textContent = "0 步 · 00:00.0";
     }
@@ -619,6 +662,47 @@ if (elements.editorRepeatCheckbox) {
   elements.editorRepeatCheckbox.addEventListener("change", () => {
     customScript.repeat = elements.editorRepeatCheckbox.checked;
     renderEditorCard();
+    scheduleAutoSave();
+  });
+}
+
+if (elements.editorExportButton) {
+  elements.editorExportButton.addEventListener("click", () => {
+    if (customScript.steps.length === 0) return;
+    const url = scriptToJsonUrl(customScript);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = scriptDownloadFilename(customScript);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Revoke after a tick so the browser has time to start the download.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+}
+
+if (elements.editorImportButton && elements.editorImportInput) {
+  elements.editorImportButton.addEventListener("click", () => {
+    elements.editorImportInput.click();
+  });
+  elements.editorImportInput.addEventListener("change", async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    try {
+      const script = await scriptFromFileInput(file);
+      // Replace the current script in place. Steps are immutable copies so
+      // mutations to the loaded script do not affect storage.
+      customScript.name = script.name;
+      customScript.repeat = script.repeat;
+      customScript.steps = script.steps;
+      renderEditorCard();
+      scheduleAutoSave();
+    } catch (error) {
+      setError(error.message || "导入脚本失败");
+    } finally {
+      // Clear the input so importing the same file twice fires change again.
+      event.target.value = "";
+    }
   });
 }
 

@@ -251,6 +251,29 @@
             />
             <span>∞ 循环</span>
           </label>
+          <span class="editor-spacer"></span>
+          <button
+            class="button button-secondary"
+            type="button"
+            data-testid="editor-export"
+            disabled
+          >
+            导出 JSON
+          </button>
+          <button
+            class="button button-secondary"
+            type="button"
+            data-testid="editor-import"
+            disabled
+          >
+            导入 JSON
+          </button>
+          <input
+            type="file"
+            accept="application/json,.json"
+            data-testid="editor-import-input"
+            hidden
+          />
         </div>
 
         <ol

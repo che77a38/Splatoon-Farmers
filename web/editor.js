@@ -455,6 +455,67 @@ function requestAnimationFrameSafe(cb) {
   return setTimeout(() => cb(), 16);
 }
 
+// --- Persistence ----------------------------------------------------------
+//
+// Browser-side persistence lives at a single localStorage key. We deliberately
+// keep this trivial — a single JSON array under one key — so future schema
+// migrations can branch on a `version` field without touching every callsite.
+//
+// The storage helpers are pure-functional w.r.t. the Script argument: they
+// never read or mutate the caller's Script instance. They only serialize to
+// JSON strings and deserialize back. This keeps the model layer free of
+// `localStorage` references so the model remains testable under Node.
+
+const STORAGE_KEY = "splatoon-farmers.customScripts.v1";
+
+export function saveScriptToStorage(script) {
+  if (typeof localStorage === "undefined") return false;
+  try {
+    localStorage.setItem(STORAGE_KEY, serializeScript(script));
+    return true;
+  } catch {
+    // Quota exceeded or localStorage disabled — silently drop; the caller
+    // can fall back to the JSON export path.
+    return false;
+  }
+}
+
+export function loadScriptFromStorage() {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return deserializeScript(raw);
+  } catch {
+    return null;
+  }
+}
+
+// Trigger a download of the script as a .json file. Returns the data URL so
+// the caller can also embed it in an `<a>` element if desired.
+export function scriptToJsonUrl(script) {
+  const json = serializeScript(script);
+  const blob = new Blob([json], { type: "application/json" });
+  return URL.createObjectURL(blob);
+}
+
+export function scriptDownloadFilename(script) {
+  const safeName = (script.name || "script")
+    .replace(/[^A-Za-z0-9._-]/g, "_")
+    .slice(0, 60);
+  return `${safeName}.json`;
+}
+
+// Parse a user-supplied File or Blob into a Script. Accepts the raw JSON
+// string, a Blob (from <input type="file">), or a File. Throws on parse
+// failure.
+export async function scriptFromFileInput(file) {
+  const text = typeof file === "string"
+    ? file
+    : await file.text();
+  return deserializeScript(text);
+}
+
 // Human-readable mm:ss.mmm formatter used by the editor summary. Kept here
 // so editor.js stays self-contained and can be unit-tested without DOM.
 export function formatMs(milliseconds) {

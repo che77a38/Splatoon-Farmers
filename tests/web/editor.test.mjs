@@ -12,6 +12,9 @@ import {
   newHold,
   newRelease,
   newDelay,
+  saveScriptToStorage,
+  loadScriptFromStorage,
+  scriptDownloadFilename,
 } from "../../web/editor.js";
 
 test("Script totalMs sums every step duration", () => {
@@ -325,4 +328,63 @@ test("ScriptRunner.stop() is a no-op when not running", async () => {
   });
   await runner.stop();
   assert.equal(transport.sent.length, 0);
+});
+
+// --- Persistence ----------------------------------------------------------
+//
+// Node has no localStorage, so each test installs a fresh in-memory stub on
+// the global object. We never depend on the stub leaking between tests.
+
+test("saveScriptToStorage / loadScriptFromStorage round-trips a Script", async () => {
+  const original = globalThis.localStorage;
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+    clear: () => store.clear(),
+  };
+  try {
+    const script = new Script({
+      name: "saved",
+      repeat: true,
+      steps: [newHold(8, 0, 500), newRelease(50), newDelay(1000)],
+    });
+    assert.equal(saveScriptToStorage(script), true);
+    const restored = loadScriptFromStorage();
+    assert.ok(restored);
+    assert.equal(restored.name, "saved");
+    assert.equal(restored.repeat, true);
+    assert.equal(restored.steps.length, 3);
+    assert.equal(restored.steps[0].buttons, 8);
+    assert.equal(restored.steps[2].durationMs, 1000);
+  } finally {
+    if (original === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = original;
+  }
+});
+
+test("loadScriptFromStorage returns null when nothing is stored", () => {
+  const original = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+    clear: () => {},
+  };
+  try {
+    assert.equal(loadScriptFromStorage(), null);
+  } finally {
+    if (original === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = original;
+  }
+});
+
+test("scriptDownloadFilename sanitizes unsafe characters", () => {
+  const filename = scriptDownloadFilename(
+    new Script({ name: "weird / name? with*chars" }),
+  );
+  assert.ok(!filename.includes("/"));
+  assert.ok(!filename.includes("?"));
+  assert.ok(filename.endsWith(".json"));
 });
