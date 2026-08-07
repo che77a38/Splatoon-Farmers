@@ -615,6 +615,84 @@ progress::-moz-progress-bar {
   border-left: 3px solid var(--coral);
 }
 
+.script-picker {
+  position: relative;
+  z-index: 1;
+  margin-top: 18px;
+}
+
+.picker-label {
+  margin: 0 0 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #5f7d76;
+  text-transform: uppercase;
+}
+
+.picker-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.picker-chip {
+  position: relative;
+  cursor: pointer;
+  padding: 10px 12px 11px;
+  background: rgba(7, 29, 25, 0.55);
+  border: 1px solid rgba(30, 224, 189, 0.22);
+  color: var(--paper);
+  font-family: inherit;
+  text-align: left;
+  clip-path: polygon(4px 0, 100% 2px, calc(100% - 3px) 100%, 0 calc(100% - 5px));
+  transition:
+    transform 130ms ease,
+    filter 130ms ease,
+    background 130ms ease,
+    border-color 130ms ease;
+}
+
+.picker-chip:not(:disabled):hover {
+  background: rgba(30, 224, 189, 0.12);
+  border-color: rgba(30, 224, 189, 0.45);
+  transform: translateY(-1px);
+}
+
+.picker-chip.is-active {
+  background: rgba(255, 213, 5, 0.16);
+  border-color: var(--yellow);
+  box-shadow: inset 0 0 0 1px rgba(255, 213, 5, 0.25);
+}
+
+.picker-chip.is-active strong {
+  color: var(--yellow);
+}
+
+.picker-chip strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.picker-chip small {
+  display: block;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #8aa49d;
+  letter-spacing: 0.04em;
+}
+
+.picker-chip:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.4);
+  opacity: 0.45;
+}
+
 .controls {
   position: relative;
   z-index: 1;

@@ -19,10 +19,57 @@ const elements = {
   errorText: document.querySelector('[data-testid="error-text"]'),
   durationText: document.querySelector('[data-testid="duration-text"]'),
   manualStatus: document.querySelector('[data-testid="manual-status"]'),
+  routineText: document.querySelector('[data-testid="routine-text"]'),
+  stepCountText: document.querySelector('[data-testid="step-count-text"]'),
+  heroStepCount: document.querySelector('[data-testid="hero-step-count"]'),
+  scriptChips: [
+    ...document.querySelectorAll(
+      '[data-testid="script-material"], [data-testid="script-apricot"], [data-testid="script-inkback"]',
+    ),
+  ],
 };
 const manualButtons = [
   ...document.querySelectorAll("button[data-control]"),
 ];
+
+// Script display metadata, keyed by the `routine` string the device emits in
+// `info` / `status` JSON. The command we send depends on the key:
+//   material-farm         -> START          (default, 48-step 杏棱巢穴)
+//   apricot-den           -> START_APRICOT  (EndingCrystal 35-step 天妇罗巢穴)
+//   apricot-den-inkback   -> START_INKBACK  (天妇罗回墨版: same 35-step surface
+//                                              but the two held-ZR windows are
+//                                              rewritten as alternating ZR/ZL
+//                                              taps to pump paint back in)
+const SCRIPTS = {
+  "material-farm": {
+    label: "杏棱巢穴",
+    command: "START",
+    stepCount: 48,
+    cycleMs: 63595,
+  },
+  "apricot-den": {
+    label: "天妇罗巢穴",
+    command: "START_APRICOT",
+    stepCount: 35,
+    cycleMs: 55750,
+  },
+  "apricot-den-inkback": {
+    label: "天妇罗回墨版",
+    command: "START_INKBACK",
+    stepCount: 100,
+    cycleMs: 95750,
+  },
+};
+const DEFAULT_SCRIPT_KEY = "material-farm";
+const KNOWN_SCRIPT_KEYS = new Set(Object.keys(SCRIPTS));
+
+// Script the user has *selected* in the picker. Distinct from `deviceRoutine`,
+// which mirrors the firmware's currently-running script (updated from
+// STATUS responses). The picker only takes effect when the user clicks Start.
+let selectedScript = DEFAULT_SCRIPT_KEY;
+// Last `routine` value reported by the device. Defaults to the picker choice
+// so the UI does not flash "杏棱巢穴" before the first STATUS comes back.
+let deviceRoutine = selectedScript;
 
 const mockMode = new URLSearchParams(window.location.search).get("mock") === "1";
 const TransportClass = mockMode ? MockSerialTransport : SerialTransport;
@@ -34,16 +81,37 @@ let busy = false;
 let deviceState = "unknown";
 let devicePhase = "idle";
 let currentStep = 0;
-let stepCount = 48;
+// Display step count tracks the *device's* current routine when known, else
+// falls back to the picker-selected script's declared count.
+let stepCount = SCRIPTS[selectedScript].stepCount;
 let pollTimer = null;
 let activeManualControls = new Set();
+// One-shot flag: set true right before the post-connect HELLO so that the
+// single response that comes back is allowed to re-snap the picker to the
+// firmware's actual active script. Cleared as soon as any line is consumed,
+// so STATUS polls never trigger a chip yank.
+let pendingHelloSync = false;
 const manualInputState = new ManualInputState(onManualInputChange);
 
-elements.durationText.textContent = formatDuration(63595);
+elements.durationText.textContent = formatDuration(SCRIPTS[selectedScript].cycleMs);
+syncScriptChipUi();
 
 function setError(message = "") {
   elements.errorText.textContent = message;
   elements.errorText.hidden = !message;
+}
+
+// Reflects the picker's selection into the chip buttons (active state,
+// aria-pressed, and the visible label/count). Called once at boot, on every
+// chip click, and whenever the device reports a different running routine.
+function syncScriptChipUi() {
+  if (!elements.scriptChips) return;
+  for (const chip of elements.scriptChips) {
+    if (!chip) continue;
+    const isActive = chip.dataset.script === selectedScript;
+    chip.classList.toggle("is-active", isActive);
+    chip.setAttribute("aria-pressed", String(isActive));
+  }
 }
 
 function render() {
@@ -53,6 +121,14 @@ function render() {
   elements.connectionButton.disabled = busy || !transportSupported;
   elements.startButton.disabled = busy || !connected || running || manualActive;
   elements.stopButton.disabled = busy || !connected || !running;
+  // Picker is enabled as soon as we're connected. We deliberately let the user
+  // switch scripts while a routine is running — pressing Start afterwards will
+  // restart with the new script (the firmware stops the old engine first).
+  if (elements.scriptChips) {
+    for (const chip of elements.scriptChips) {
+      if (chip) chip.disabled = busy || !connected;
+    }
+  }
   for (const button of manualButtons) {
     const pressed = activeManualControls.has(button.dataset.control);
     button.disabled = busy || !connected;
@@ -82,7 +158,7 @@ function render() {
     elements.detailText.textContent = `已完成 ${Math.max(
       1,
       Number(elements.statusBadge.dataset.cycle || 1),
-    )} 轮 · 准备下一次素材远征`;
+    )} 轮 · 准备下一次${SCRIPTS[deviceRoutine].label}`;
   } else if (running) {
     elements.statusText.textContent = "远征执行中";
     elements.detailText.textContent = `脚本在 ESP32-S3 本地执行 · 第 ${currentStep}/${stepCount} 步`;
@@ -109,7 +185,7 @@ function render() {
     : `0 / ${stepCount}`;
 }
 
-function applyDeviceMessage(message) {
+function applyDeviceMessage(message, { syncPicker = false } = {}) {
   if (!message || message.ok === false) {
     if (message?.message) {
       setError(message.message);
@@ -123,8 +199,29 @@ function applyDeviceMessage(message) {
   deviceState = message.state === "running" ? "running" : "idle";
   devicePhase = message.phase || "idle";
   currentStep = Number(message.step) || 0;
-  stepCount = Number(message.steps) || 48;
+  stepCount = Number(message.steps) || stepCount;
   elements.statusBadge.dataset.cycle = String(Number(message.cycle) || 0);
+  // The device reports its running routine in `routine`. We track it as
+  // `deviceRoutine` for the status copy and the gap-phase "prepare next ..."
+  // text. The picker only follows the device on the *initial* HELLO after
+  // reconnect (so the chip matches whatever was already running). STATUS
+  // polls do NOT yank the chip back — the user's picker choice stays
+  // authoritative until they press Start; pressing Start will overwrite the
+  // firmware's selection with whichever chip is highlighted.
+  if (typeof message.routine === "string" &&
+      KNOWN_SCRIPT_KEYS.has(message.routine)) {
+    deviceRoutine = message.routine;
+    const meta = SCRIPTS[deviceRoutine];
+    elements.routineText.textContent = meta.label;
+    elements.stepCountText.textContent = String(meta.stepCount);
+    if (elements.heroStepCount) {
+      elements.heroStepCount.textContent = `${meta.stepCount} STEPS`;
+    }
+    if (syncPicker) {
+      selectedScript = deviceRoutine;
+      syncScriptChipUi();
+    }
+  }
   if (Number.isFinite(message.cycle_ms)) {
     elements.durationText.textContent = formatDuration(message.cycle_ms);
   }
@@ -133,7 +230,9 @@ function applyDeviceMessage(message) {
 }
 
 function onLine(line) {
-  applyDeviceMessage(parseDeviceLine(line));
+  const syncPicker = pendingHelloSync;
+  pendingHelloSync = false;
+  applyDeviceMessage(parseDeviceLine(line), { syncPicker });
 }
 
 function onManualInputChange(activeControls) {
@@ -176,6 +275,11 @@ async function connect() {
   try {
     await transport.connect();
     connected = true;
+    // The HELLO right after connecting is the only response that should
+    // re-snap the chip to whatever the firmware was already running. We flag
+    // it with a transport-side hook so `onLine` can pass `syncPicker: true`
+    // for this single response, then we clear the flag.
+    pendingHelloSync = true;
     await transport.send("HELLO");
     pollTimer = window.setInterval(() => {
       transport?.send("STATUS").catch(onUnexpectedDisconnect);
@@ -229,8 +333,37 @@ elements.connectionButton.addEventListener("click", () => {
     connect();
   }
 });
-elements.startButton.addEventListener("click", () => sendCommand("START"));
+elements.startButton.addEventListener("click", () =>
+  sendCommand(SCRIPTS[selectedScript].command),
+);
 elements.stopButton.addEventListener("click", () => sendCommand("STOP"));
+
+for (const chip of elements.scriptChips) {
+  chip.addEventListener("click", () => {
+    const target = chip.dataset.script;
+    if (!KNOWN_SCRIPT_KEYS.has(target) || target === selectedScript) {
+      return;
+    }
+    selectedScript = target;
+    // Update the picker state and the static readouts. The device will pick
+    // up the change the next time the user presses Start (or immediately if a
+    // STATUS poll happens to fire between now and then — `applyDeviceMessage`
+    // is the source of truth and will re-sync us either way).
+    syncScriptChipUi();
+    const meta = SCRIPTS[selectedScript];
+    elements.routineText.textContent = meta.label;
+    elements.stepCountText.textContent = String(meta.stepCount);
+    if (elements.heroStepCount) {
+      elements.heroStepCount.textContent = `${meta.stepCount} STEPS`;
+    }
+    elements.durationText.textContent = formatDuration(meta.cycleMs);
+    // Snap the progress bar so the static "X / N" text doesn't lie about the
+    // count between switching and the next STATUS poll.
+    stepCount = meta.stepCount;
+    currentStep = 0;
+    render();
+  });
+}
 
 function pointerSource(pointerId) {
   return `pointer:${pointerId}`;

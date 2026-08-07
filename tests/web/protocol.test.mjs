@@ -62,3 +62,44 @@ test("manual raw report stops the mock macro and is acknowledged", async () => {
   assert.deepEqual(lines[1], { type: "ack", ok: true });
   assert.equal(lines[2].state, "idle");
 });
+
+test("START_APRICOT switches the mock to the apricot-den routine", async () => {
+  const lines = [];
+  const transport = new MockSerialTransport({
+    onLine: (line) => lines.push(parseDeviceLine(line)),
+    onDisconnect: () => assert.fail("mock should not disconnect"),
+  });
+
+  await transport.connect();
+  await transport.send("HELLO");
+  await transport.send("START_APRICOT");
+  await transport.send("STATUS");
+
+  assert.equal(lines[0].routine, "material-farm");
+  assert.equal(lines[1].state, "running");
+  assert.equal(lines[1].routine, "apricot-den");
+  assert.equal(lines[1].steps, 35);
+  assert.equal(lines[2].routine, "apricot-den");
+  assert.equal(lines[2].state, "running");
+});
+
+test("START_INKBACK switches the mock to the apricot-den-inkback routine", async () => {
+  const lines = [];
+  const transport = new MockSerialTransport({
+    onLine: (line) => lines.push(parseDeviceLine(line)),
+    onDisconnect: () => assert.fail("mock should not disconnect"),
+  });
+
+  await transport.connect();
+  await transport.send("HELLO");
+  await transport.send("START_INKBACK");
+  await transport.send("STATUS");
+
+  assert.equal(lines[0].routine, "material-farm");
+  assert.equal(lines[1].state, "running");
+  assert.equal(lines[1].routine, "apricot-den-inkback");
+  assert.equal(lines[1].steps, 100);
+  assert.equal(lines[1].cycle_ms, 95750);
+  assert.equal(lines[2].routine, "apricot-den-inkback");
+  assert.equal(lines[2].state, "running");
+});

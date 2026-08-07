@@ -46,17 +46,18 @@
           </p>
           <div class="hero-tags" aria-label="功能摘要">
             <span>BOARD-RESIDENT</span>
-            <span>48 STEPS</span>
+            <span data-testid="hero-step-count">48 STEPS</span>
             <span>∞ LOOP</span>
+            <span>3 SCRIPTS</span>
           </div>
         </div>
 
-        <section class="control-card" aria-label="素材远征控制">
+        <section class="control-card" aria-label="杏棱巢穴控制">
           <div class="card-tape" aria-hidden="true">RAID READY</div>
           <div class="card-head">
             <div>
               <p class="card-kicker">CURRENT ROUTINE / 当前任务</p>
-              <h2>素材远征 · 自动循环</h2>
+              <h2>杏棱巢穴 · 自动循环</h2>
             </div>
             <div
               class="status-badge"
@@ -70,8 +71,12 @@
 
           <div class="macro-facts" aria-label="脚本信息">
             <div>
+              <span>SCRIPT / 脚本</span>
+              <strong data-testid="routine-text">杏棱巢穴</strong>
+            </div>
+            <div>
               <span>STEPS / 步骤</span>
-              <strong>48</strong>
+              <strong data-testid="step-count-text">48</strong>
             </div>
             <div>
               <span>CYCLE / 单轮</span>
@@ -94,6 +99,45 @@
               value="0"
               aria-label="脚本执行进度"
             ></progress>
+          </div>
+
+          <div class="script-picker" role="group" aria-label="选择脚本">
+            <p class="picker-label">SCRIPT / 选脚本</p>
+            <div class="picker-row">
+              <button
+                class="picker-chip is-active"
+                type="button"
+                data-script="material-farm"
+                data-testid="script-material"
+                aria-pressed="true"
+                disabled
+              >
+                <strong>杏棱巢穴</strong>
+                <small>48 步 · 01:03.6</small>
+              </button>
+              <button
+                class="picker-chip"
+                type="button"
+                data-script="apricot-den"
+                data-testid="script-apricot"
+                aria-pressed="false"
+                disabled
+              >
+                <strong>天妇罗巢穴</strong>
+                <small>35 步 · 00:55.7</small>
+              </button>
+              <button
+                class="picker-chip"
+                type="button"
+                data-script="apricot-den-inkback"
+                data-testid="script-inkback"
+                aria-pressed="false"
+                disabled
+              >
+                <strong>天妇罗回墨</strong>
+                <small>100 步 · 01:35.7</small>
+              </button>
+            </div>
           </div>
 
           <p class="device-detail" data-testid="detail-text">

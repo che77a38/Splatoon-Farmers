@@ -135,10 +135,41 @@ export class MockSerialTransport {
     this.step = 0;
     this.cycle = 0;
     this.lastReport = null;
+    // Tracks the currently selected routine, mirroring firmware `Active`.
+    // Mirrors the SCRIPTS table in app.js so the mock stays in sync with the
+    // web UI's expectations. Kept inline (not imported) to avoid pulling the
+    // browser-only app.js into Node's module loader.
+    this.routine = "material-farm";
+    this.steps = 48;
+    this.durationMs = 61010;
+    this.loopGapMs = 2585;
+    this.cycleMs = 63595;
   }
 
   static isSupported() {
     return true;
+  }
+
+  selectRoutine(name) {
+    if (name === "apricot-den-inkback") {
+      this.routine = "apricot-den-inkback";
+      this.steps = 100;
+      this.durationMs = 95550;
+      this.loopGapMs = 200;
+      this.cycleMs = 95750;
+    } else if (name === "apricot-den") {
+      this.routine = "apricot-den";
+      this.steps = 35;
+      this.durationMs = 55550;
+      this.loopGapMs = 200;
+      this.cycleMs = 55750;
+    } else {
+      this.routine = "material-farm";
+      this.steps = 48;
+      this.durationMs = 61010;
+      this.loopGapMs = 2585;
+      this.cycleMs = 63595;
+    }
   }
 
   async connect() {
@@ -149,7 +180,24 @@ export class MockSerialTransport {
     if (!this.connected) {
       throw new Error("模拟串口尚未连接");
     }
-    if (command === "START") {
+    if (
+      command === "START" ||
+      command === "START_MATERIAL" ||
+      command === "START_DEFAULT"
+    ) {
+      this.selectRoutine("material-farm");
+      this.state = "running";
+      this.phase = "steps";
+      this.step = 1;
+      this.emit("status");
+    } else if (command === "START_APRICOT" || command === "START2") {
+      this.selectRoutine("apricot-den");
+      this.state = "running";
+      this.phase = "steps";
+      this.step = 1;
+      this.emit("status");
+    } else if (command === "START_INKBACK" || command === "START3") {
+      this.selectRoutine("apricot-den-inkback");
       this.state = "running";
       this.phase = "steps";
       this.step = 1;
@@ -163,6 +211,8 @@ export class MockSerialTransport {
       this.emit("info");
     } else if (command === "STATUS") {
       this.emit("status");
+    } else if (command === "SCRIPT") {
+      this.onLine(JSON.stringify({ script: this.routine }));
     } else if (command === "PING") {
       this.onLine("PONG");
     } else if (/^R \d+ \d+ \d+ \d+ \d+ \d+$/.test(command)) {
@@ -186,16 +236,16 @@ export class MockSerialTransport {
         type,
         ok: true,
         firmware: "SplatoonFarmers/mock",
-        routine: "material-farm",
+        routine: this.routine,
         embedded: true,
         state: this.state,
         phase: this.phase,
         step: this.step,
-        steps: 48,
+        steps: this.steps,
         cycle: this.cycle,
-        duration_ms: 61010,
-        loop_gap_ms: 2585,
-        cycle_ms: 63595,
+        duration_ms: this.durationMs,
+        loop_gap_ms: this.loopGapMs,
+        cycle_ms: this.cycleMs,
       }),
     );
   }

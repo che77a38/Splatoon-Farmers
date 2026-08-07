@@ -5,6 +5,8 @@
 
 #include "ControllerReport.h"
 #include "MaterialFarmMacro.h"
+#include "ApricotDenMacro.h"
+#include "ApricotDenInkbackMacro.h"
 #include "MacroEngine.h"
 #include "switch_ESP32.h"
 
@@ -26,13 +28,46 @@ constexpr uint32_t kControlBaudRate = 115200;
 constexpr char kFirmwareVersion[] = "SplatoonFarmers/1.0.0";
 
 NSGamepad Gamepad;
-farmers::MacroEngine Macro(
+farmers::MacroEngine MaterialMacro(
     farmers::kMaterialFarmMacro, farmers::kMaterialFarmStepCount,
     farmers::kMaterialFarmLoopGapMs, true);
+farmers::MacroEngine ApricotMacro(
+    farmers::kApricotDenMacro, farmers::kApricotDenStepCount,
+    farmers::kApricotDenLoopGapMs, true);
+farmers::MacroEngine ApricotInkbackMacro(
+    farmers::kApricotDenInkbackMacro, farmers::kApricotDenInkbackStepCount,
+    farmers::kApricotDenInkbackLoopGapMs, true);
+
+// Currently selected macro for START* commands. STOP is script-agnostic.
+enum class ActiveScript : uint8_t { kMaterial, kApricot, kApricotInkback };
+ActiveScript Active = ActiveScript::kMaterial;
+
+farmers::MacroEngine& activeMacro() {
+  switch (Active) {
+    case ActiveScript::kApricotInkback: return ApricotInkbackMacro;
+    case ActiveScript::kApricot:         return ApricotMacro;
+    case ActiveScript::kMaterial:        return MaterialMacro;
+  }
+  return MaterialMacro;
+}
+
+const char* activeScriptName() {
+  switch (Active) {
+    case ActiveScript::kApricotInkback: return "apricot-den-inkback";
+    case ActiveScript::kApricot:        return "apricot-den";
+    case ActiveScript::kMaterial:       return "material-farm";
+  }
+  return "material-farm";
+}
 
 char LineBuffer[128];
 size_t LineLength = 0;
 bool LineOverflow = false;
+
+// When true, the host is driving the bus via raw `R ...` frames (custom
+// scripts). Macro engines are stopped and tick() is skipped each loop so
+// they cannot re-emit HID reports. Set by `STREAM`, cleared by `STREAM_END`.
+bool streamMode = false;
 
 uint8_t clampAxis(unsigned long value) {
   return value > 255 ? 255 : static_cast<uint8_t>(value);
@@ -81,27 +116,71 @@ const char* phaseName(farmers::MacroPhase phase) {
   }
 }
 
+// Per-script metadata for emitState(). Returns the static descriptor matching
+// the currently selected script so the JSON reflects whichever routine the
+// caller is asking about.
+struct ScriptMeta {
+  const char* name;
+  size_t stepCount;
+  uint32_t durationMs;
+  uint32_t loopGapMs;
+  uint32_t cycleMs;
+};
+
+ScriptMeta activeMeta() {
+  if (Active == ActiveScript::kApricotInkback) {
+    return {"apricot-den-inkback", farmers::kApricotDenInkbackStepCount,
+            farmers::kApricotDenInkbackDurationMs,
+            farmers::kApricotDenInkbackLoopGapMs,
+            farmers::kApricotDenInkbackCycleMs};
+  }
+  if (Active == ActiveScript::kApricot) {
+    return {"apricot-den",       farmers::kApricotDenStepCount,
+            farmers::kApricotDenDurationMs,
+            farmers::kApricotDenLoopGapMs,
+            farmers::kApricotDenCycleMs};
+  }
+  return {"material-farm",      farmers::kMaterialFarmStepCount,
+          farmers::kMaterialFarmDurationMs,
+          farmers::kMaterialFarmLoopGapMs,
+          farmers::kMaterialFarmCycleMs};
+}
+
 void emitState(const char* type) {
+  farmers::MacroEngine& macro = activeMacro();
+  const ScriptMeta meta = activeMeta();
   const size_t visibleStep =
-      Macro.phase() == farmers::MacroPhase::kSteps ? Macro.stepIndex() + 1 : 0;
+      macro.phase() == farmers::MacroPhase::kSteps ? macro.stepIndex() + 1 : 0;
   ATT_CONTROL_SERIAL.printf(
       "{\"type\":\"%s\",\"ok\":true,\"firmware\":\"%s\","
-      "\"routine\":\"material-farm\",\"embedded\":true,\"state\":\"%s\","
+      "\"routine\":\"%s\",\"embedded\":true,\"state\":\"%s\","
       "\"phase\":\"%s\",\"step\":%u,\"steps\":%u,\"cycle\":%lu,"
       "\"duration_ms\":%lu,\"loop_gap_ms\":%lu,\"cycle_ms\":%lu}\n",
-      type, kFirmwareVersion, Macro.running() ? "running" : "idle",
-      phaseName(Macro.phase()), static_cast<unsigned int>(visibleStep),
-      static_cast<unsigned int>(farmers::kMaterialFarmStepCount),
-      static_cast<unsigned long>(Macro.cycleCount()),
-      static_cast<unsigned long>(farmers::kMaterialFarmDurationMs),
-      static_cast<unsigned long>(farmers::kMaterialFarmLoopGapMs),
-      static_cast<unsigned long>(farmers::kMaterialFarmCycleMs));
+      type, kFirmwareVersion, meta.name,
+      macro.running() ? "running" : "idle",
+      phaseName(macro.phase()), static_cast<unsigned int>(visibleStep),
+      static_cast<unsigned int>(meta.stepCount),
+      static_cast<unsigned long>(macro.cycleCount()),
+      static_cast<unsigned long>(meta.durationMs),
+      static_cast<unsigned long>(meta.loopGapMs),
+      static_cast<unsigned long>(meta.cycleMs));
 }
 
 void flushMacroReport() {
-  if (Macro.consumeReportChanged()) {
-    applyReport(Macro.report());
+  farmers::MacroEngine& macro = activeMacro();
+  if (macro.consumeReportChanged()) {
+    applyReport(macro.report());
   }
+}
+
+// STOP is script-agnostic: stop whichever engine is currently running so a
+// START_APRICOT followed by STOP still halts the apricot script even if the
+// caller switches back to material-farm mid-stop.
+void stopAllMacros() {
+  MaterialMacro.stop();
+  ApricotMacro.stop();
+  ApricotInkbackMacro.stop();
+  flushMacroReport();
 }
 
 void handleLine(char* line) {
@@ -117,16 +196,63 @@ void handleLine(char* line) {
     emitState("status");
     return;
   }
-  if (strcmp(line, "START") == 0) {
-    Macro.start(millis());
+  if (strcmp(line, "STOP") == 0) {
+    stopAllMacros();
+    emitState("status");
+    return;
+  }
+  // Stream mode: stop every macro engine and let the host drive raw `R ...`
+  // frames until STREAM_END. While streamMode is true the macro tick is
+  // suppressed in loop() so a stopped engine cannot re-emit stale reports.
+  if (strcmp(line, "STREAM") == 0) {
+    stopAllMacros();
+    streamMode = true;
+    ATT_CONTROL_SERIAL.println("OK");
+    return;
+  }
+  if (strcmp(line, "STREAM_END") == 0) {
+    streamMode = false;
+    applyReport(farmers::kNeutralReport);
+    ATT_CONTROL_SERIAL.println("OK");
+    return;
+  }
+  // Script selection. START / START_MATERIAL = material-farm (default);
+  // START_APRICOT = apricot-den. Selecting a script always stops whichever
+    // script is currently running so a stale engine never keeps emitting HID
+    // reports after a switch.
+  if (strcmp(line, "START") == 0 ||
+      strcmp(line, "START_MATERIAL") == 0 ||
+      strcmp(line, "START_DEFAULT") == 0) {
+    Active = ActiveScript::kMaterial;
+    stopAllMacros();
+    farmers::MacroEngine& macro = activeMacro();
+    macro.start(millis());
     flushMacroReport();
     emitState("status");
     return;
   }
-  if (strcmp(line, "STOP") == 0) {
-    Macro.stop();
+  if (strcmp(line, "START_APRICOT") == 0 ||
+      strcmp(line, "START2") == 0) {
+    Active = ActiveScript::kApricot;
+    stopAllMacros();
+    farmers::MacroEngine& macro = activeMacro();
+    macro.start(millis());
     flushMacroReport();
     emitState("status");
+    return;
+  }
+  if (strcmp(line, "START_INKBACK") == 0 ||
+      strcmp(line, "START3") == 0) {
+    Active = ActiveScript::kApricotInkback;
+    stopAllMacros();
+    farmers::MacroEngine& macro = activeMacro();
+    macro.start(millis());
+    flushMacroReport();
+    emitState("status");
+    return;
+  }
+  if (strcmp(line, "SCRIPT") == 0) {
+    ATT_CONTROL_SERIAL.printf("{\"script\":\"%s\"}\n", activeScriptName());
     return;
   }
 
@@ -144,9 +270,16 @@ void handleLine(char* line) {
   if (parsed == 7 &&
       (strcmp(command, "R") == 0 || strcmp(command, "REPORT") == 0)) {
     // Raw reports power manual input and leave a fallback path for future
-    // computer-loaded routines. Entering this mode stops the embedded routine.
-    Macro.stop();
-    Macro.consumeReportChanged();
+    // computer-loaded routines. Entering this mode stops both embedded
+    // routines so neither continues to emit HID reports.
+    //
+    // In stream mode the macro engines are already stopped by STREAM, so the
+    // unconditional stopAllMacros() call would be redundant. Skip it to keep
+    // the per-frame path cheap: the browser sends tens of frames per second.
+    if (!streamMode) {
+      stopAllMacros();
+      activeMacro().consumeReportChanged();
+    }
     applyRawReport(buttons, dpad, leftX, leftY, rightX, rightY);
     ATT_CONTROL_SERIAL.println("OK");
     return;
@@ -192,7 +325,14 @@ void setup() {
 
 void loop() {
   readControlSerial();
-  Macro.tick(millis());
+  // Tick whichever script is active. The non-active engine stays stopped.
+  // Skip the tick entirely while the host is driving raw frames via
+  // STREAM — the engines are stopped at that point and ticking them would
+  // be wasted work plus a stale flushMacroReport() could overwrite the
+  // most recently streamed HID report.
+  if (!streamMode) {
+    activeMacro().tick(millis());
+  }
   flushMacroReport();
   Gamepad.loop();
 }
