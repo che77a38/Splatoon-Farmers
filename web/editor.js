@@ -305,6 +305,156 @@ export class ScriptRecorder {
   }
 }
 
+// Stream runner: drives a Script's steps to the firmware via raw `R ...`
+// frames sent through the Web Serial transport. Each hold/release step is
+// pushed at the start of its durationMs window; the runner waits for the
+// window to elapse (poll via requestAnimationFrame / injected clock) before
+// advancing.
+//
+// `delay` steps do not produce a frame — they only consume time. After the
+// last step the runner honors `script.repeat` and loops back to the start
+// instead of stopping.
+//
+// The transport only needs `send(command)` and the runner keeps an
+// `onProgress` hook so the host can update a progress bar. We intentionally
+// do NOT subscribe to firmware responses — `R` frames only get `OK` back
+// and chasing that path adds latency without correctness benefit.
+export class ScriptRunner {
+  constructor({ transport, getScript, requestFrame = null, onProgress = null, now = null } = {}) {
+    if (!transport || typeof transport.send !== "function") {
+      throw new Error("ScriptRunner 需要带 send() 方法的 transport");
+    }
+    if (typeof getScript !== "function") {
+      throw new Error("ScriptRunner 需要 getScript 函数返回当前 Script");
+    }
+    this.transport = transport;
+    this.getScript = getScript;
+    // requestFrame(cb) -> handle. cb receives no arguments; the runner
+    // tracks elapsed time internally via now().
+    this.requestFrame = requestFrame || ((cb) => requestAnimationFrameSafe(cb));
+    this.cancelFrame = null;
+    this.onProgress = typeof onProgress === "function" ? onProgress : null;
+    this.now = now || (() => (typeof performance !== "undefined" ? performance.now() : Date.now()));
+    this.running = false;
+    this.stepIndex = 0;
+    this.stepStartMs = 0;
+    this.frameHandle = null;
+  }
+
+  isRunning() {
+    return this.running;
+  }
+
+  // Issue the firmware STREAM handshake and begin playback. Returns a
+  // promise that resolves once the transport accepted the STREAM command.
+  async play() {
+    if (this.running) return;
+    const script = this.getScript();
+    if (!script || script.steps.length === 0) return;
+    await this.transport.send("STREAM");
+    this.running = true;
+    this.stepIndex = 0;
+    this.runStep();
+  }
+
+  // Cancel playback. Sends STREAM_END followed by a neutral frame so the
+  // device settles back to a known state regardless of where the runner
+  // was mid-step.
+  async stop() {
+    if (!this.running) return;
+    this.running = false;
+    if (this.frameHandle !== null && this.cancelFrame) {
+      this.cancelFrame(this.frameHandle);
+    }
+    this.frameHandle = null;
+    try {
+      await this.transport.send("STREAM_END");
+      await this.transport.send("R 0 15 128 128 128 128");
+    } catch {
+      // best-effort cleanup
+    }
+  }
+
+  // Internal: emit the current step's frame (if any) and schedule the next
+  // advancement. Called once per step boundary, not per frame.
+  runStep() {
+    if (!this.running) return;
+    const script = this.getScript();
+    const step = script.steps[this.stepIndex];
+    if (!step) {
+      this.finish(script);
+      return;
+    }
+    const cmd = stepToRCommand(step);
+    if (cmd) {
+      this.transport.send(cmd).catch(() => {});
+    }
+    if (this.onProgress) {
+      this.onProgress({
+        stepIndex: this.stepIndex,
+        totalSteps: script.steps.length,
+      });
+    }
+    this.stepStartMs = this.now();
+    this.scheduleAdvance(step.durationMs | 0);
+  }
+
+  // Hook the host-supplied requestFrame. The callback is invoked once per
+  // animation frame; it decides whether the current step's window has
+  // elapsed and either reschedules or advances.
+  scheduleAdvance(durationMs) {
+    this.frameHandle = this.requestFrame(() => this.tick(durationMs));
+  }
+
+  tick(expectedDuration) {
+    this.frameHandle = null;
+    if (!this.running) return;
+    const script = this.getScript();
+    if (!script) return;
+    const elapsed = this.now() - this.stepStartMs;
+    if (elapsed + 1 < expectedDuration) {
+      this.scheduleAdvance(expectedDuration);
+      return;
+    }
+    this.stepIndex += 1;
+    if (this.stepIndex >= script.steps.length) {
+      if (script.repeat) {
+        this.stepIndex = 0;
+        this.runStep();
+      } else {
+        this.finish(script);
+      }
+      return;
+    }
+    this.runStep();
+  }
+
+  finish(script) {
+    this.running = false;
+    if (this.frameHandle !== null && this.cancelFrame) {
+      this.cancelFrame(this.frameHandle);
+      this.frameHandle = null;
+    }
+    if (this.onProgress) {
+      this.onProgress({
+        stepIndex: this.stepIndex,
+        totalSteps: script.steps.length,
+        finished: true,
+      });
+    }
+    this.transport.send("STREAM_END").catch(() => {});
+    this.transport.send("R 0 15 128 128 128 128").catch(() => {});
+  }
+}
+
+// requestAnimationFrame wrapper that also exposes cancel for testing.
+function requestAnimationFrameSafe(cb) {
+  if (typeof requestAnimationFrame === "function") {
+    return requestAnimationFrame(() => cb());
+  }
+  return setTimeout(() => cb(), 16);
+}
+
 // Human-readable mm:ss.mmm formatter used by the editor summary. Kept here
 // so editor.js stays self-contained and can be unit-tested without DOM.
 export function formatMs(milliseconds) {

@@ -103,3 +103,20 @@ test("START_INKBACK switches the mock to the apricot-den-inkback routine", async
   assert.equal(lines[2].routine, "apricot-den-inkback");
   assert.equal(lines[2].state, "running");
 });
+
+test("STREAM and STREAM_END toggle the mock's streamMode flag", async () => {
+  const lines = [];
+  const transport = new MockSerialTransport({
+    onLine: (line) => lines.push(parseDeviceLine(line)),
+    onDisconnect: () => assert.fail("mock should not disconnect"),
+  });
+
+  await transport.connect();
+  assert.equal(transport.streamMode, false);
+  await transport.send("STREAM");
+  assert.equal(transport.streamMode, true);
+  assert.deepEqual(lines.at(-1), { type: "ack", ok: true });
+  await transport.send("STREAM_END");
+  assert.equal(transport.streamMode, false);
+  assert.deepEqual(lines.at(-1), { type: "ack", ok: true });
+});

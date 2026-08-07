@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   Script,
   ScriptRecorder,
+  ScriptRunner,
   serializeScript,
   deserializeScript,
   stepIcon,
@@ -176,4 +177,152 @@ test("ScriptRecorder clear() closes any open hold", () => {
   recorder.onRecordEvent({ type: "press", control: "A", time: 0 });
   recorder.onRecordEvent({ type: "clear", controls: ["A"], time: 300 });
   assert.equal(script.steps[0].durationMs, 300);
+});
+
+// --- ScriptRunner ----------------------------------------------------------
+
+function makeFakeTransport() {
+  const sent = [];
+  return {
+    sent,
+    send(cmd) {
+      sent.push(cmd);
+      return Promise.resolve();
+    },
+  };
+}
+
+test("ScriptRunner.play() sends STREAM then runs each step in order", async () => {
+  const script = new Script({
+    steps: [
+      newHold(0b100, 15, 50),
+      newRelease(50),
+      newHold(0b010, 15, 50),
+      newRelease(50),
+    ],
+  });
+  const transport = makeFakeTransport();
+  const ticks = [];
+  // Fake clock + RAF: each cb tick advances the clock by the step duration
+  // so the runner's `elapsed >= expectedDuration` check fires immediately.
+  let nowMs = 0;
+  const runner = new ScriptRunner({
+    transport,
+    getScript: () => script,
+    requestFrame: (cb) => { ticks.push(() => { nowMs += 50; cb(); }); return ticks.length; },
+    now: () => nowMs,
+  });
+  await runner.play();
+  // 4 steps * 2 RAFs (one for runStep's own frame plus the advance) — actually
+  // each step triggers one frame, so we need 4 ticks to traverse all 4 steps.
+  for (let i = 0; i < 4; i += 1) ticks.shift()();
+  // 1 STREAM + 4 R frames + finish() sends STREAM_END + neutral = 7 total.
+  assert.equal(transport.sent.length, 7);
+  assert.equal(transport.sent[0], "STREAM");
+  assert.equal(transport.sent[1], "R 4 15 128 128 128 128");
+  assert.equal(transport.sent[2], "R 0 15 128 128 128 128");
+  assert.equal(transport.sent[3], "R 2 15 128 128 128 128");
+  assert.equal(transport.sent[4], "R 0 15 128 128 128 128");
+  runner.stop();
+});
+
+test("ScriptRunner.repeat=true loops indefinitely until stop()", async () => {
+  const script = new Script({
+    repeat: true,
+    steps: [newHold(0b001, 15, 50), newRelease(50)],
+  });
+  const transport = makeFakeTransport();
+  const ticks = [];
+  let nowMs = 0;
+  const runner = new ScriptRunner({
+    transport,
+    getScript: () => script,
+    requestFrame: (cb) => { ticks.push(() => { nowMs += 50; cb(); }); return ticks.length; },
+    now: () => nowMs,
+  });
+  await runner.play();
+  // Drain 6 RAF ticks. Each tick advances one step, but the loop wraps
+  // around so the actual number of emitted R frames depends on cycle
+  // boundaries. The point is just that multiple cycles run and the runner
+  // does not stop on its own.
+  for (let i = 0; i < 6; i += 1) ticks.shift()();
+  const rCountBeforeStop = transport.sent.filter((s) => s.startsWith("R ")).length;
+  assert.ok(rCountBeforeStop >= 4, `repeat 应该发出多帧，实际 ${rCountBeforeStop}`);
+  // STREAM should always be the first command.
+  assert.equal(transport.sent[0], "STREAM");
+  await runner.stop();
+  assert.ok(transport.sent.includes("STREAM_END"));
+  assert.ok(transport.sent.includes("R 0 15 128 128 128 128"));
+  // No more R frames after stop().
+  const rCountAfterStop = transport.sent.filter((s) => s.startsWith("R ")).length;
+  for (let i = 0; i < 5; i += 1) {
+    const cb = ticks.shift();
+    if (cb) cb();
+  }
+  assert.equal(
+    transport.sent.filter((s) => s.startsWith("R ")).length,
+    rCountAfterStop,
+    "stop() 之后不能再发 R 帧",
+  );
+});
+
+test("ScriptRunner skips delay steps but advances the timeline", async () => {
+  const script = new Script({
+    steps: [newHold(1, 15, 50), newDelay(200), newRelease(50)],
+  });
+  const transport = makeFakeTransport();
+  const ticks = [];
+  // Single fake-clock cursor. Each tick represents one RAF callback.
+  // Step 1: hold 50ms — needs 1 tick
+  // Step 2: delay 200ms — needs 4 ticks (50ms each = 200ms total)
+  // Step 3: release 50ms — needs 1 tick
+  // Total: 6 ticks to finish.
+  const advances = [50, 50, 50, 50, 50, 50];
+  let idx = 0;
+  let nowMs = 0;
+  const runner = new ScriptRunner({
+    transport,
+    getScript: () => script,
+    requestFrame: (cb) => {
+      ticks.push(() => {
+        nowMs += advances[idx++] || 50;
+        cb();
+      });
+      return ticks.length;
+    },
+    now: () => nowMs,
+  });
+  await runner.play();
+  for (let i = 0; i < 6; i += 1) ticks.shift()();
+  // STREAM + 2 R frames (hold, release) + finish()'s STREAM_END + neutral.
+  assert.equal(transport.sent.length, 5);
+  assert.equal(transport.sent[0], "STREAM");
+  assert.equal(transport.sent[1], "R 1 15 128 128 128 128");
+  assert.equal(transport.sent[2], "R 0 15 128 128 128 128");
+  assert.equal(transport.sent[3], "STREAM_END");
+  assert.equal(transport.sent[4], "R 0 15 128 128 128 128");
+});
+
+test("ScriptRunner refuses to play an empty script", async () => {
+  const script = new Script({ steps: [] });
+  const transport = makeFakeTransport();
+  const runner = new ScriptRunner({
+    transport,
+    getScript: () => script,
+    requestFrame: () => 0,
+  });
+  await runner.play();
+  assert.equal(transport.sent.length, 0);
+  assert.equal(runner.isRunning(), false);
+});
+
+test("ScriptRunner.stop() is a no-op when not running", async () => {
+  const transport = makeFakeTransport();
+  const runner = new ScriptRunner({
+    transport,
+    getScript: () => new Script(),
+    requestFrame: () => 0,
+  });
+  await runner.stop();
+  assert.equal(transport.sent.length, 0);
 });

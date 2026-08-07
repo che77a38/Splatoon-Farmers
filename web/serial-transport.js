@@ -135,6 +135,7 @@ export class MockSerialTransport {
     this.step = 0;
     this.cycle = 0;
     this.lastReport = null;
+    this.streamMode = false;
     // Tracks the currently selected routine, mirroring firmware `Active`.
     // Mirrors the SCRIPTS table in app.js so the mock stays in sync with the
     // web UI's expectations. Kept inline (not imported) to avoid pulling the
@@ -220,6 +221,15 @@ export class MockSerialTransport {
       this.phase = "idle";
       this.step = 0;
       this.lastReport = command;
+      this.onLine("OK");
+    } else if (command === "STREAM") {
+      // Stream mode: firmware stops the macro engines and accepts raw
+      // `R ...` frames as the host-driven HID bus. The mock mirrors this
+      // by toggling its stream flag without altering the routine name.
+      this.streamMode = true;
+      this.onLine("OK");
+    } else if (command === "STREAM_END") {
+      this.streamMode = false;
       this.onLine("OK");
     } else {
       this.onLine("ERR");

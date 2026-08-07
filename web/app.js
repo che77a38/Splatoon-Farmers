@@ -5,7 +5,7 @@ import {
   ManualInputState,
 } from "./manual-input.js";
 import { MockSerialTransport, SerialTransport } from "./serial-transport.js";
-import { Script, ScriptRecorder, emptyScript, stepIcon, formatMs } from "./editor.js";
+import { Script, ScriptRecorder, ScriptRunner, emptyScript, stepIcon, formatMs } from "./editor.js";
 
 const elements = {
   connectionButton: document.querySelector('[data-testid="connect-button"]'),
@@ -99,6 +99,9 @@ let deviceRoutine = selectedScript;
 // by the editor (later commits add recorder + runner wiring).
 const customScript = emptyScript();
 const scriptRecorder = new ScriptRecorder(customScript);
+// Stream runner is created lazily on first "运行" click once transport is
+// connected; we keep a single instance per session.
+let streamRunner = null;
 
 const mockMode = new URLSearchParams(window.location.search).get("mock") === "1";
 const TransportClass = mockMode ? MockSerialTransport : SerialTransport;
@@ -505,10 +508,54 @@ elements.connectionButton.addEventListener("click", () => {
     connect();
   }
 });
-elements.startButton.addEventListener("click", () =>
-  sendCommand(SCRIPTS[selectedScript].command),
-);
-elements.stopButton.addEventListener("click", () => sendCommand("STOP"));
+elements.startButton.addEventListener("click", () => {
+  if (selectedScript === "custom") {
+    playCustomScript();
+  } else {
+    sendCommand(SCRIPTS[selectedScript].command);
+  }
+});
+elements.stopButton.addEventListener("click", () => {
+  if (streamRunner && streamRunner.isRunning()) {
+    streamRunner.stop();
+    setError();
+  } else {
+    sendCommand("STOP");
+  }
+});
+
+async function playCustomScript() {
+  if (!connected || !transport) {
+    setError("请先连接手柄");
+    return;
+  }
+  if (customScript.steps.length === 0) {
+    setError("脚本为空 — 请先添加步骤或录制");
+    return;
+  }
+  if (scriptRecorder.active) {
+    setError("录制中，请先停止录制");
+    return;
+  }
+  if (!streamRunner) {
+    streamRunner = new ScriptRunner({
+      transport,
+      getScript: () => customScript,
+      onProgress: ({ stepIndex, totalSteps, finished }) => {
+        if (elements.editorStatusText) {
+          elements.editorStatusText.textContent = finished
+            ? `已结束 · ${totalSteps} 步`
+            : `运行中 · ${stepIndex + 1}/${totalSteps}`;
+        }
+        if (elements.editorStatus) {
+          elements.editorStatus.dataset.state = finished ? "finished" : "running";
+        }
+      },
+    });
+  }
+  setError();
+  await streamRunner.play();
+}
 
 for (const chip of elements.scriptChips) {
   chip.addEventListener("click", () => {
