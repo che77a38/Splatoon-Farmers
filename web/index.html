@@ -137,6 +137,17 @@
                 <strong>天妇罗回墨</strong>
                 <small>100 步 · 01:35.7</small>
               </button>
+              <button
+                class="picker-chip picker-chip--custom"
+                type="button"
+                data-script="custom"
+                data-testid="script-custom"
+                aria-pressed="false"
+                disabled
+              >
+                <strong>自定义</strong>
+                <small data-testid="custom-summary">0 步 · 00:00.0</small>
+              </button>
             </div>
           </div>
 
@@ -175,6 +186,81 @@
             桌面版 Chrome / Edge · 浏览器只负责发令，不参与脚本计时
           </p>
         </section>
+      </section>
+
+      <section
+        class="control-card editor-card"
+        aria-labelledby="editor-title"
+        data-testid="editor-card"
+        hidden
+      >
+        <div class="card-tape" aria-hidden="true">CUSTOM SCRIPT</div>
+        <div class="card-head">
+          <div>
+            <p class="card-kicker">EDITOR / 自定义脚本</p>
+            <h2 id="editor-title">录一段，改一下，跑起来</h2>
+          </div>
+          <div
+            class="status-badge"
+            data-testid="editor-status"
+            data-state="empty"
+          >
+            <span class="status-dot" aria-hidden="true"></span>
+            <span data-testid="editor-status-text">空脚本</span>
+          </div>
+        </div>
+
+        <div class="macro-facts" aria-label="脚本统计">
+          <div>
+            <span>STEPS / 步骤</span>
+            <strong data-testid="editor-step-count">0</strong>
+          </div>
+          <div>
+            <span>TOTAL / 总时长</span>
+            <strong data-testid="editor-total-ms">00:00.000</strong>
+          </div>
+          <div>
+            <span>REPEAT / 循环</span>
+            <strong data-testid="editor-repeat-text">单次</strong>
+          </div>
+        </div>
+
+        <div class="editor-toolbar" role="group" aria-label="编辑器工具栏">
+          <button
+            class="button button-stop"
+            type="button"
+            data-testid="editor-clear"
+            disabled
+          >
+            清空
+          </button>
+          <label class="editor-repeat-toggle">
+            <input
+              type="checkbox"
+              data-testid="editor-repeat"
+              disabled
+            />
+            <span>∞ 循环</span>
+          </label>
+        </div>
+
+        <ol
+          class="editor-steps"
+          data-testid="editor-steps"
+          aria-label="脚本步骤"
+        ></ol>
+
+        <p class="editor-empty" data-testid="editor-empty">
+          切换到「自定义」chip 后，按下方 REC 开始录制，或点 + 添加步骤。
+        </p>
+
+        <p class="editor-recording-hint" data-testid="editor-recording-hint" hidden>
+          ● REC：按键盘 IJKL/方向键/QE/123 自动追加步骤。再次按 REC 停止。
+        </p>
+
+        <p class="browser-note" data-testid="editor-note">
+          录制与运行由浏览器驱动；切换其他 chip 时自定义脚本不会发送到板子。
+        </p>
       </section>
 
       <section

@@ -5,6 +5,7 @@ import {
   ManualInputState,
 } from "./manual-input.js";
 import { MockSerialTransport, SerialTransport } from "./serial-transport.js";
+import { Script, emptyScript, stepIcon, formatMs } from "./editor.js";
 
 const elements = {
   connectionButton: document.querySelector('[data-testid="connect-button"]'),
@@ -24,9 +25,20 @@ const elements = {
   heroStepCount: document.querySelector('[data-testid="hero-step-count"]'),
   scriptChips: [
     ...document.querySelectorAll(
-      '[data-testid="script-material"], [data-testid="script-apricot"], [data-testid="script-inkback"]',
+      '[data-testid="script-material"], [data-testid="script-apricot"], [data-testid="script-inkback"], [data-testid="script-custom"]',
     ),
   ],
+  customSummary: document.querySelector('[data-testid="custom-summary"]'),
+  editorCard: document.querySelector('[data-testid="editor-card"]'),
+  editorStatus: document.querySelector('[data-testid="editor-status"]'),
+  editorStatusText: document.querySelector('[data-testid="editor-status-text"]'),
+  editorStepCount: document.querySelector('[data-testid="editor-step-count"]'),
+  editorTotalMs: document.querySelector('[data-testid="editor-total-ms"]'),
+  editorRepeatText: document.querySelector('[data-testid="editor-repeat-text"]'),
+  editorClearButton: document.querySelector('[data-testid="editor-clear"]'),
+  editorRepeatCheckbox: document.querySelector('[data-testid="editor-repeat"]'),
+  editorSteps: document.querySelector('[data-testid="editor-steps"]'),
+  editorEmpty: document.querySelector('[data-testid="editor-empty"]'),
 };
 const manualButtons = [
   ...document.querySelectorAll("button[data-control]"),
@@ -59,6 +71,16 @@ const SCRIPTS = {
     stepCount: 100,
     cycleMs: 95750,
   },
+  // "custom" is a host-side script driven by the WebUI editor. The picker
+  // chip sets `selectedScript = "custom"` but the actual steps live in
+  // `customScript` (see below); running this routine is handled by the
+  // stream runner in app.js's startButton handler — never by `sendCommand`.
+  custom: {
+    label: "自定义",
+    command: null,
+    stepCount: 0,
+    cycleMs: 0,
+  },
 };
 const DEFAULT_SCRIPT_KEY = "material-farm";
 const KNOWN_SCRIPT_KEYS = new Set(Object.keys(SCRIPTS));
@@ -70,6 +92,10 @@ let selectedScript = DEFAULT_SCRIPT_KEY;
 // Last `routine` value reported by the device. Defaults to the picker choice
 // so the UI does not flash "杏棱巢穴" before the first STATUS comes back.
 let deviceRoutine = selectedScript;
+
+// In-browser script for the "custom" picker chip. Owned by app.js, mutated
+// by the editor (later commits add recorder + runner wiring).
+const customScript = emptyScript();
 
 const mockMode = new URLSearchParams(window.location.search).get("mock") === "1";
 const TransportClass = mockMode ? MockSerialTransport : SerialTransport;
@@ -95,10 +121,119 @@ const manualInputState = new ManualInputState(onManualInputChange);
 
 elements.durationText.textContent = formatDuration(SCRIPTS[selectedScript].cycleMs);
 syncScriptChipUi();
+renderEditorCard();
 
 function setError(message = "") {
   elements.errorText.textContent = message;
   elements.errorText.hidden = !message;
+}
+
+// Render the script editor card. The card is shown only when the picker is
+// on the "custom" chip so it does not steal space while the user is using a
+// firmware-resident routine. Step rows are pure DOM built from the
+// `customScript.steps` array; mutation events go through the same helpers
+// the recorder will use in later commits.
+function renderEditorCard() {
+  if (!elements.editorCard) return;
+  const isCustom = selectedScript === "custom";
+  elements.editorCard.hidden = !isCustom;
+  if (!isCustom) return;
+
+  const steps = customScript.steps;
+  const totalMs = customScript.totalMs();
+
+  if (elements.customSummary) {
+    elements.customSummary.textContent =
+      `${steps.length} 步 · ${formatMs(totalMs)}`;
+  }
+  if (elements.editorStepCount) {
+    elements.editorStepCount.textContent = String(steps.length);
+  }
+  if (elements.editorTotalMs) {
+    elements.editorTotalMs.textContent = formatMs(totalMs);
+  }
+  if (elements.editorRepeatText) {
+    elements.editorRepeatText.textContent = customScript.repeat ? "循环" : "单次";
+  }
+  if (elements.editorEmpty) {
+    elements.editorEmpty.hidden = steps.length > 0;
+  }
+  if (elements.editorClearButton) {
+    elements.editorClearButton.disabled = steps.length === 0;
+  }
+  if (elements.editorRepeatCheckbox) {
+    elements.editorRepeatCheckbox.checked = customScript.repeat;
+    elements.editorRepeatCheckbox.disabled = false;
+  }
+  if (elements.editorStatusText) {
+    elements.editorStatusText.textContent = steps.length === 0 ? "空脚本" : `${steps.length} 步`;
+  }
+  if (elements.editorStatus) {
+    elements.editorStatus.dataset.state = steps.length === 0 ? "empty" : "ready";
+  }
+
+  if (elements.editorSteps) {
+    elements.editorSteps.replaceChildren(...steps.map((step, idx) =>
+      renderStepRow(step, idx)));
+  }
+}
+
+function renderStepRow(step, idx) {
+  const li = document.createElement("li");
+  li.className = "editor-step";
+  li.dataset.type = step.type;
+  li.dataset.stepIdx = String(idx);
+
+  const num = document.createElement("span");
+  num.className = "editor-step-num";
+  num.textContent = `#${idx + 1}`;
+  li.appendChild(num);
+
+  const icon = document.createElement("span");
+  icon.className = "editor-step-icon";
+  icon.textContent = stepIcon(step);
+  li.appendChild(icon);
+
+  const duration = document.createElement("input");
+  duration.className = "editor-step-duration";
+  duration.type = "number";
+  duration.min = "10";
+  duration.step = "10";
+  duration.value = String(step.durationMs | 0);
+  duration.setAttribute("aria-label", `第 ${idx + 1} 步时长`);
+  duration.addEventListener("change", () => {
+    const value = Math.max(10, parseInt(duration.value, 10) || 10);
+    customScript.steps[idx].durationMs = value;
+    duration.value = String(value);
+    renderEditorCard();
+  });
+  li.appendChild(duration);
+
+  const actions = document.createElement("div");
+  actions.className = "editor-step-actions";
+  actions.appendChild(stepActionButton("↑", "up", idx, idx === 0));
+  actions.appendChild(stepActionButton("↓", "down", idx, idx === customScript.steps.length - 1));
+  actions.appendChild(stepActionButton("⎘", "dup", idx, false));
+  actions.appendChild(stepActionButton("✕", "del", idx, false, "editor-step-action--danger"));
+  li.appendChild(actions);
+
+  return li;
+}
+
+function stepActionButton(label, action, idx, disabled, modifier = "") {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `editor-step-action ${modifier}`.trim();
+  btn.textContent = label;
+  btn.disabled = disabled;
+  btn.addEventListener("click", () => {
+    if (action === "up") customScript.moveStep(idx, idx - 1);
+    else if (action === "down") customScript.moveStep(idx, idx + 1);
+    else if (action === "dup") customScript.duplicateStep(idx);
+    else if (action === "del") customScript.removeStep(idx);
+    renderEditorCard();
+  });
+  return btn;
 }
 
 // Reflects the picker's selection into the chip buttons (active state,
@@ -351,17 +486,55 @@ for (const chip of elements.scriptChips) {
     // is the source of truth and will re-sync us either way).
     syncScriptChipUi();
     const meta = SCRIPTS[selectedScript];
-    elements.routineText.textContent = meta.label;
-    elements.stepCountText.textContent = String(meta.stepCount);
-    if (elements.heroStepCount) {
-      elements.heroStepCount.textContent = `${meta.stepCount} STEPS`;
+    if (target === "custom") {
+      // The custom chip's step count / duration come from customScript, not
+      // from the static SCRIPTS table; defer those updates to renderEditorCard.
+      elements.routineText.textContent = meta.label;
+      stepCount = customScript.steps.length || 1;
+      currentStep = 0;
+      elements.durationText.textContent = formatDuration(0);
+      elements.stepCountText.textContent = String(customScript.steps.length);
+      if (elements.heroStepCount) {
+        elements.heroStepCount.textContent = `${customScript.steps.length} STEPS`;
+      }
+      renderEditorCard();
+    } else {
+      elements.routineText.textContent = meta.label;
+      elements.stepCountText.textContent = String(meta.stepCount);
+      if (elements.heroStepCount) {
+        elements.heroStepCount.textContent = `${meta.stepCount} STEPS`;
+      }
+      elements.durationText.textContent = formatDuration(meta.cycleMs);
+      stepCount = meta.stepCount;
+      currentStep = 0;
+      renderEditorCard();
     }
-    elements.durationText.textContent = formatDuration(meta.cycleMs);
-    // Snap the progress bar so the static "X / N" text doesn't lie about the
-    // count between switching and the next STATUS poll.
-    stepCount = meta.stepCount;
-    currentStep = 0;
     render();
+  });
+}
+
+if (elements.editorClearButton) {
+  elements.editorClearButton.addEventListener("click", () => {
+    if (customScript.steps.length === 0) return;
+    if (!window.confirm("清空脚本会删除所有步骤，确定吗？")) return;
+    customScript.clear();
+    renderEditorCard();
+    if (elements.customSummary) {
+      elements.customSummary.textContent = "0 步 · 00:00.0";
+    }
+    if (elements.stepCountText) {
+      elements.stepCountText.textContent = "0";
+    }
+    if (elements.heroStepCount) {
+      elements.heroStepCount.textContent = "0 STEPS";
+    }
+  });
+}
+
+if (elements.editorRepeatCheckbox) {
+  elements.editorRepeatCheckbox.addEventListener("change", () => {
+    customScript.repeat = elements.editorRepeatCheckbox.checked;
+    renderEditorCard();
   });
 }
 

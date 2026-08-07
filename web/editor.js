@@ -1,0 +1,223 @@
+// Script Editor — pure JS module with no DOM dependency, so the model can
+// be exercised under Node's `node:test` without jsdom. The UI rendering
+// helpers (`renderStepRow`, `stepIcon`) are also DOM-free; they build
+// strings instead of DOM nodes so they remain testable.
+//
+// Step shape:
+//   { type: 'hold',    buttons, dpad, sticks: [lx,ly,rx,ry], durationMs }
+//   { type: 'release', buttons: 0, dpad: 15, sticks: [128,128,128,128], durationMs }
+//   { type: 'delay',   durationMs }
+//
+// hold: maintain buttons/dpad/sticks for `durationMs`
+// release: emit neutral report for `durationMs`
+// delay: do nothing for `durationMs` (no HID frame is sent)
+
+import { BUTTON_BITS, DPAD_CONTROLS } from "./manual-input.js";
+
+// Step kinds we understand. Anything else is rejected at deserialization.
+const STEP_TYPES = Object.freeze(["hold", "release", "delay"]);
+
+// Reverse BUTTON_BITS map: bit index -> name. Computed once at module load.
+const BUTTON_NAMES = Object.freeze(
+  Object.entries(BUTTON_BITS).reduce((acc, [name, bit]) => {
+    acc[bit] = name;
+    return acc;
+  }, {}),
+);
+
+// D-pad value -> short label. Mirrors dpadValue() in manual-input.js.
+const DPAD_LABELS = Object.freeze({
+  0: "↑",
+  1: "↗",
+  2: "→",
+  3: "↘",
+  4: "↓",
+  5: "↙",
+  6: "←",
+  7: "↖",
+  15: "·",
+});
+
+export function stepIcon(step) {
+  if (!step) return "";
+  if (step.type === "delay") return "⏱ 延时";
+  if (step.type === "release") return "松开";
+  if (step.type === "hold") {
+    const names = [];
+    for (let bit = 0; bit < 14; bit += 1) {
+      if (step.buttons & (1 << bit)) {
+        names.push(BUTTON_NAMES[bit] || `bit${bit}`);
+      }
+    }
+    if (step.dpad !== undefined && step.dpad !== 15 && DPAD_LABELS[step.dpad]) {
+      names.push(DPAD_LABELS[step.dpad]);
+    }
+    return names.length ? names.join(" + ") : "空";
+  }
+  return "?";
+}
+
+// Compile a step into the wire format the firmware consumes. Returns null
+// for delay steps (the runner waits via requestAnimationFrame timing).
+export function stepToRCommand(step) {
+  if (step.type !== "hold" && step.type !== "release") return null;
+  const sticks = step.sticks || [128, 128, 128, 128];
+  const buttons = step.buttons | 0;
+  const dpad = step.dpad | 0;
+  return `R ${buttons} ${dpad} ${sticks[0]} ${sticks[1]} ${sticks[2]} ${sticks[3]}`;
+}
+
+function newHold(buttons = 0, dpad = 15, durationMs = 100) {
+  return {
+    type: "hold",
+    buttons,
+    dpad,
+    sticks: [128, 128, 128, 128],
+    durationMs,
+  };
+}
+
+function newRelease(durationMs = 50) {
+  return {
+    type: "release",
+    buttons: 0,
+    dpad: 15,
+    sticks: [128, 128, 128, 128],
+    durationMs,
+  };
+}
+
+function newDelay(durationMs = 100) {
+  return { type: "delay", durationMs };
+}
+
+export class Script {
+  constructor({ name = "未命名", steps = [], repeat = false } = {}) {
+    this.name = name;
+    this.steps = steps.slice();
+    this.repeat = repeat;
+  }
+
+  totalMs() {
+    let total = 0;
+    for (const step of this.steps) {
+      total += (step.durationMs | 0) || 0;
+    }
+    return total;
+  }
+
+  addStep(step) {
+    this.steps.push(step);
+  }
+
+  insertStep(index, step) {
+    const at = Math.max(0, Math.min(index, this.steps.length));
+    this.steps.splice(at, 0, step);
+  }
+
+  removeStep(index) {
+    if (index < 0 || index >= this.steps.length) return null;
+    const [removed] = this.steps.splice(index, 1);
+    return removed;
+  }
+
+  moveStep(fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || fromIndex >= this.steps.length) return;
+    const target = Math.max(0, Math.min(toIndex, this.steps.length - 1));
+    const [item] = this.steps.splice(fromIndex, 1);
+    this.steps.splice(target, 0, item);
+  }
+
+  duplicateStep(index) {
+    if (index < 0 || index >= this.steps.length) return null;
+    const copy = JSON.parse(JSON.stringify(this.steps[index]));
+    this.steps.splice(index + 1, 0, copy);
+    return copy;
+  }
+
+  clear() {
+    this.steps = [];
+  }
+
+  clone() {
+    return new Script({
+      name: this.name,
+      steps: this.steps.map((s) => JSON.parse(JSON.stringify(s))),
+      repeat: this.repeat,
+    });
+  }
+
+  toJSON() {
+    return serializeScript(this);
+  }
+}
+
+export function serializeScript(script) {
+  return JSON.stringify({
+    name: script.name,
+    repeat: script.repeat,
+    steps: script.steps.map((step) => ({
+      type: step.type,
+      buttons: step.buttons | 0,
+      dpad: step.dpad | 0,
+      sticks: (step.sticks || [128, 128, 128, 128]).slice(),
+      durationMs: step.durationMs | 0,
+    })),
+  });
+}
+
+export function deserializeScript(json) {
+  let parsed;
+  try {
+    parsed = typeof json === "string" ? JSON.parse(json) : json;
+  } catch (error) {
+    throw new Error(`无法解析脚本 JSON: ${error.message}`);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("脚本 JSON 必须是对象");
+  }
+  const steps = Array.isArray(parsed.steps) ? parsed.steps : [];
+  const cleanSteps = [];
+  for (const raw of steps) {
+    if (!raw || !STEP_TYPES.includes(raw.type)) continue;
+    if (raw.type === "delay") {
+      cleanSteps.push(newDelay(Math.max(10, raw.durationMs | 0 || 100)));
+      continue;
+    }
+    const sticks = Array.isArray(raw.sticks) && raw.sticks.length === 4
+      ? raw.sticks.map((v) => Math.max(0, Math.min(255, v | 0)))
+      : [128, 128, 128, 128];
+    cleanSteps.push({
+      type: raw.type,
+      buttons: raw.buttons | 0,
+      dpad: raw.dpad | 0,
+      sticks,
+      durationMs: Math.max(10, raw.durationMs | 0 || 100),
+    });
+  }
+  return new Script({
+    name: typeof parsed.name === "string" ? parsed.name : "未命名",
+    repeat: Boolean(parsed.repeat),
+    steps: cleanSteps,
+  });
+}
+
+export function emptyScript() {
+  return new Script();
+}
+
+export { newHold, newRelease, newDelay };
+
+// Human-readable mm:ss.mmm formatter used by the editor summary. Kept here
+// so editor.js stays self-contained and can be unit-tested without DOM.
+export function formatMs(milliseconds) {
+  const total = Math.max(0, Math.round(milliseconds | 0));
+  const minutes = Math.floor(total / 60000);
+  const seconds = Math.floor((total % 60000) / 1000);
+  const millis = total % 1000;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(
+    2,
+    "0",
+  )}.${String(millis).padStart(3, "0")}`;
+}

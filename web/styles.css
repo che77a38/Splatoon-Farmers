@@ -633,7 +633,7 @@ progress::-moz-progress-bar {
 
 .picker-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 8px;
 }
 
@@ -691,6 +691,22 @@ progress::-moz-progress-bar {
   cursor: not-allowed;
   filter: saturate(0.4);
   opacity: 0.45;
+}
+
+/* Custom script chip uses the coral accent so it is visually distinct from
+ * the three firmware-resident routines. */
+.picker-chip--custom {
+  border-style: dashed;
+  border-color: rgba(255, 99, 71, 0.45);
+}
+.picker-chip--custom.is-active {
+  background: rgba(255, 99, 71, 0.18);
+  border-color: var(--coral);
+  border-style: solid;
+  box-shadow: inset 0 0 0 1px rgba(255, 99, 71, 0.3);
+}
+.picker-chip--custom.is-active strong {
+  color: var(--coral);
 }
 
 .controls {
@@ -1389,4 +1405,177 @@ footer {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* --- Script editor card -------------------------------------------------- */
+
+.editor-card {
+  margin-top: 18px;
+}
+
+.editor-card[hidden] {
+  display: none !important;
+}
+
+.editor-toolbar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.editor-toolbar .button {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+.editor-repeat-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--paper);
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+}
+
+.editor-repeat-toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--coral);
+  cursor: pointer;
+}
+
+.editor-repeat-toggle input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+.editor-steps {
+  position: relative;
+  z-index: 1;
+  list-style: none;
+  margin: 18px 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.editor-step {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(7, 29, 25, 0.55);
+  border: 1px solid rgba(30, 224, 189, 0.18);
+  border-left: 3px solid var(--coral);
+  clip-path: polygon(4px 0, 100% 2px, calc(100% - 3px) 100%, 0 calc(100% - 5px));
+}
+
+.editor-step[data-type="delay"] {
+  border-left-color: var(--yellow);
+}
+
+.editor-step-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  color: #8aa49d;
+  min-width: 32px;
+}
+
+.editor-step-icon {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-step-duration {
+  width: 70px;
+  padding: 4px 6px;
+  background: rgba(7, 29, 25, 0.7);
+  border: 1px solid rgba(30, 224, 189, 0.4);
+  color: var(--paper);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.editor-step-duration:focus {
+  outline: 2px solid var(--yellow);
+  outline-offset: 1px;
+}
+
+.editor-step-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.editor-step-action {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: rgba(30, 224, 189, 0.12);
+  border: 1px solid rgba(30, 224, 189, 0.3);
+  color: var(--paper);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  clip-path: polygon(2px 0, 100% 1px, calc(100% - 2px) 100%, 0 calc(100% - 3px));
+}
+
+.editor-step-action:hover:not(:disabled) {
+  background: rgba(30, 224, 189, 0.25);
+}
+
+.editor-step-action--danger {
+  background: rgba(255, 99, 71, 0.18);
+  border-color: rgba(255, 99, 71, 0.45);
+}
+
+.editor-step-action--danger:hover:not(:disabled) {
+  background: rgba(255, 99, 71, 0.32);
+}
+
+.editor-step-action:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.4);
+  opacity: 0.4;
+}
+
+.editor-empty,
+.editor-recording-hint {
+  position: relative;
+  z-index: 1;
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  background: rgba(7, 29, 25, 0.4);
+  border: 1px dashed rgba(30, 224, 189, 0.3);
+  color: #93aaa3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.editor-recording-hint {
+  border-style: solid;
+  border-color: var(--coral);
+  background: rgba(255, 99, 71, 0.15);
+  color: var(--paper);
 }
