@@ -162,3 +162,76 @@ npm run serve          # 然后浏览器打开 http://localhost:4173
 - [[esp32s3-splatoon-farmers-board]] — N16R8 板子 + CH340 端口的事实
 - [[platformio-home-server-stuck]] — PlatformIO home server 卡死现象 + 修复
 - [[user-zh-cli-preferences]] — 用户的语言/边界/沟通偏好
+
+## 12. 自定义脚本编辑器（Web 端 v1）
+
+主控制卡右上角的 picker 第四档「自定义」展开一个编辑器卡片，只在该 chip 被选中时显示。
+
+### 数据形态
+
+每条步骤形如：
+
+```json
+{ "type": "hold",    "buttons": 4, "dpad": 15, "sticks": [128,128,128,128], "durationMs": 500 }
+{ "type": "release", "buttons": 0, "dpad": 15, "sticks": [128,128,128,128], "durationMs": 50 }
+{ "type": "delay",   "durationMs": 1000 }
+```
+
+`hold` 持续 `durationMs` 期间按住按钮/方向；`release` 期间发 neutral 帧；`delay` 仅消耗时间、不发帧。
+
+### 协议路径（运行自定义脚本时）
+
+1. WebUI 点「开始刷取」（custom chip）→ `ScriptRunner.play()` 异步发送 `STREAM`
+2. Firmware 收到 `STREAM` 停所有 macro engine，进入 stream 模式（[main.cpp](firmware/src/main.cpp) `streamMode = true`）
+3. 浏览器侧 `requestAnimationFrame` 节奏按步骤时长推进；每个 hold/release 帧通过 `R buttons dpad lx ly rx ry` 发给 firmware
+4. firmware 在 stream 模式下直接转发 R 帧给 HID，不调 `stopAllMacros()`（避免 per-frame 浪费）
+5. 脚本结束或用户点「停止」→ 浏览器发 `STREAM_END` + neutral，firmware 清 streamMode
+
+录制时走的是同一条 R 帧通道，但由 `ManualInputState.onRecordEvent` 回调转成步骤。
+
+### 录制方法
+
+- **键盘**：IJKL=XYBA、方向键=方向键、Q/E=L/R、1/3=ZL/ZR、Z/X=L3/R3、C/H=Capture/Home
+- **WebUI 按钮**：直接点 A/B/X/Y/ZR 等按钮同样触发
+- **触发逻辑**：按下一个键 → 自动追加 `hold` 步骤；松开 → 自动追加 `release` 步骤；连续两次按下间隔 > 50ms → 中间夹 `delay` 步骤
+- **副作用**：录制期间清空按钮、循环开关、导入/导出按钮全部禁用；REC 按钮红色脉冲
+
+### 持久化
+
+- **localStorage**：key = `splatoon-farmers.customScripts.v1`，任何步骤变化后 500ms debounce 自动保存
+- **导出 JSON**：工具栏「导出 JSON」按钮 → 下载 `<filename>.json`（文件名从脚本名 sanitize 而来）
+- **导入 JSON**：工具栏「导入 JSON」按钮 → 选文件 → 替换当前脚本（解析失败显示 error）
+
+### 数据格式参考
+
+完整 JSON 形态（serializeScript 输出）：
+
+```json
+{
+  "name": "weird / name? with*chars",
+  "repeat": false,
+  "steps": [
+    { "type": "hold",    "buttons": 8, "dpad": 0, "sticks": [128,128,128,128], "durationMs": 500 },
+    { "type": "release", "buttons": 0, "dpad": 15, "sticks": [128,128,128,128], "durationMs": 50 }
+  ]
+}
+```
+
+### 关键文件
+
+| 文件 | 用途 |
+|---|---|
+| [`web/editor.js`](web/editor.js) | Script 类 + ScriptRecorder + ScriptRunner + 持久化 helpers |
+| [`tests/web/editor.test.mjs`](tests/web/editor.test.mjs) | 35 个 Node 单测（Script、Recorder、Runner、持久化） |
+| [`web/manual-input.js`](web/manual-input.js) | `ManualInputState` ctor 增加 `onRecordEvent` 第二参数 |
+| [`web/app.js`](web/app.js) | 集成编辑器卡、picker 第 4 chip、startButton/stopButton 分支 |
+| [`web/index.html`](web/index.html) | 编辑器卡 DOM 骨架 |
+| [`web/styles.css`](web/styles.css) | 编辑器 / picker / REC 动画样式 |
+
+### v1 已知限制
+
+- 摇杆固定 128 128 128 128（无摇杆输入源）
+- 不支持拖拽排序（用 ↑↓ 按钮重排）
+- 多脚本并存未实现（编辑器一次只编辑一个）
+- 物理手柄录制未实现（Web Gamepad API 不在 v1 范围）
+- 脚本烧录到 firmware 永久存储未实现（接口预留）
