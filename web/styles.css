@@ -1579,3 +1579,22 @@ footer {
   background: rgba(255, 99, 71, 0.15);
   color: var(--paper);
 }
+
+.editor-rec-button {
+  color: var(--paper);
+  font-size: 12px;
+  font-weight: 900;
+  background: rgba(255, 99, 71, 0.25);
+  border: 1px solid rgba(255, 99, 71, 0.6);
+}
+
+.editor-rec-button.is-recording {
+  background: var(--coral);
+  color: var(--paper);
+  animation: editor-rec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes editor-rec-pulse {
+  0%, 100% { filter: brightness(1); }
+  50%      { filter: brightness(0.55); }
+}

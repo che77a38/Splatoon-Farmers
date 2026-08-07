@@ -209,6 +209,102 @@ export function emptyScript() {
 
 export { newHold, newRelease, newDelay };
 
+// Recorder that turns raw press / release events into Script steps. The
+// recorder owns no timers; the host (app.js) provides `time` via the
+// `onRecordEvent` payload, so the class is fully testable under Node
+// with fake clocks.
+//
+// Mapping rules (kept intentionally simple for v1):
+//   press     -> push a 'hold' step with the *current* bitmap + dpad
+//                (computed from the supplied activeControls set)
+//   release   -> back-fill the previous hold's durationMs with the actual
+//                elapsed time, then push a short 'release' step
+//   gap > 50ms between two events -> push a 'delay' step
+//   clear     -> close out the current hold (treat as immediate release)
+//
+// Analog sticks are always centered (128,128,128,128) since v1 has no
+// stick input source.
+export class ScriptRecorder {
+  constructor(script) {
+    this.script = script;
+    this.active = false;
+    this.lastEventTime = 0;
+    // We track the bitmap ourselves rather than recomputing from active
+    // controls because `onRecordEvent` only ships the *delta* control name,
+    // not the full set. The host calls `applyActiveSet()` whenever the
+    // active set changes; press/release events then mutate this snapshot.
+    this.buttons = 0;
+    this.dpad = 15;
+  }
+
+  start(time = Date.now()) {
+    this.script.steps = [];
+    this.lastEventTime = time;
+    this.active = true;
+    this.buttons = 0;
+    this.dpad = 15;
+  }
+
+  stop() {
+    this.active = false;
+  }
+
+  // Host-driven: call this whenever ManualInputState's activeControls set
+  // changes so the recorder keeps an up-to-date bitmap. The recorder only
+  // reads the set when a press event arrives.
+  applyActiveSet(activeControls, { buttons, dpad }) {
+    if (activeControls === undefined) return;
+    if (buttons !== undefined) this.buttons = buttons | 0;
+    if (dpad !== undefined) this.dpad = dpad | 0;
+  }
+
+  onRecordEvent(event) {
+    if (!this.active) return;
+    const { type, time = Date.now() } = event;
+    const gap = time - this.lastEventTime;
+    // A delay step only makes sense between two "open" actions — i.e.
+    // between consecutive presses. Releases already close the previous hold
+    // and are themselves short (50 ms), so inserting a delay before them
+    // would just produce meaningless extra frames at run time.
+    if (type === "press" && gap > 50 && this.script.steps.length > 0) {
+      this.script.steps.push(newDelay(Math.round(gap)));
+    }
+
+    if (type === "press") {
+      this.script.steps.push({
+        type: "hold",
+        buttons: this.buttons,
+        dpad: this.dpad,
+        sticks: [128, 128, 128, 128],
+        durationMs: 100, // back-filled by the matching release
+        _startedAt: time,
+      });
+    } else if (type === "release") {
+      // Back-fill the most recent hold's actual duration.
+      for (let i = this.script.steps.length - 1; i >= 0; i -= 1) {
+        const step = this.script.steps[i];
+        if (step.type === "hold" && step._startedAt !== undefined) {
+          step.durationMs = Math.max(50, Math.round(time - step._startedAt));
+          delete step._startedAt;
+          break;
+        }
+      }
+      this.script.steps.push(newRelease(50));
+    } else if (type === "clear") {
+      // Force-close any open hold.
+      for (let i = this.script.steps.length - 1; i >= 0; i -= 1) {
+        const step = this.script.steps[i];
+        if (step.type === "hold" && step._startedAt !== undefined) {
+          step.durationMs = Math.max(50, Math.round(time - step._startedAt));
+          delete step._startedAt;
+        }
+      }
+    }
+
+    this.lastEventTime = time;
+  }
+}
+
 // Human-readable mm:ss.mmm formatter used by the editor summary. Kept here
 // so editor.js stays self-contained and can be unit-tested without DOM.
 export function formatMs(milliseconds) {

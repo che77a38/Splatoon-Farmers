@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   Script,
+  ScriptRecorder,
   serializeScript,
   deserializeScript,
   stepIcon,
@@ -113,4 +114,66 @@ test("stepToRCommand formats hold/release and skips delay", () => {
   assert.equal(stepToRCommand(newHold(8, 0, 100)), "R 8 0 128 128 128 128");
   assert.equal(stepToRCommand(newRelease(50)), "R 0 15 128 128 128 128");
   assert.equal(stepToRCommand(newDelay(100)), null);
+});
+
+// --- ScriptRecorder --------------------------------------------------------
+
+test("ScriptRecorder captures a press + release as hold/release pair", () => {
+  const script = new Script();
+  const recorder = new ScriptRecorder(script);
+  recorder.start(0);
+  recorder.applyActiveSet(new Set(["A"]), { buttons: 4, dpad: 15 });
+  recorder.onRecordEvent({ type: "press", control: "A", source: "keyboard:KeyL", time: 0 });
+  // Mid-hold the user presses another button; recorder should back-fill the
+  // first hold's duration with the time-to-second-press.
+  recorder.applyActiveSet(new Set(["A", "B"]), { buttons: 6, dpad: 15 });
+  recorder.onRecordEvent({ type: "press", control: "B", source: "keyboard:KeyK", time: 120 });
+  recorder.onRecordEvent({ type: "release", control: "B", source: "keyboard:KeyK", time: 170 });
+  recorder.onRecordEvent({ type: "release", control: "A", source: "keyboard:KeyL", time: 220 });
+
+  assert.equal(script.steps.length, 5);
+  assert.equal(script.steps[0].type, "hold");
+  assert.equal(script.steps[0].buttons, 4);
+  assert.equal(script.steps[1].type, "delay");
+  assert.equal(script.steps[1].durationMs, 120);
+  assert.equal(script.steps[2].type, "hold");
+  assert.equal(script.steps[2].buttons, 6);
+  assert.equal(script.steps[2].durationMs, 50);
+  assert.equal(script.steps[3].type, "release");
+  assert.equal(script.steps[4].type, "release");
+});
+
+test("ScriptRecorder inserts delay steps for gaps > 50ms", () => {
+  const script = new Script();
+  const recorder = new ScriptRecorder(script);
+  recorder.start(0);
+  recorder.applyActiveSet(new Set(["A"]), { buttons: 4, dpad: 15 });
+  recorder.onRecordEvent({ type: "press", control: "A", time: 0 });
+  recorder.onRecordEvent({ type: "release", control: "A", time: 100 });
+  // 500ms pause -> delay step
+  recorder.applyActiveSet(new Set(["B"]), { buttons: 2, dpad: 15 });
+  recorder.onRecordEvent({ type: "press", control: "B", time: 600 });
+
+  const types = script.steps.map((s) => s.type);
+  assert.deepEqual(types, ["hold", "release", "delay", "hold"]);
+  assert.equal(script.steps[2].durationMs, 500);
+});
+
+test("ScriptRecorder is a no-op when inactive", () => {
+  const script = new Script();
+  const recorder = new ScriptRecorder(script);
+  // No start() called
+  recorder.onRecordEvent({ type: "press", control: "A", time: 0 });
+  recorder.onRecordEvent({ type: "release", control: "A", time: 100 });
+  assert.equal(script.steps.length, 0);
+});
+
+test("ScriptRecorder clear() closes any open hold", () => {
+  const script = new Script();
+  const recorder = new ScriptRecorder(script);
+  recorder.start(0);
+  recorder.applyActiveSet(new Set(["A"]), { buttons: 4, dpad: 15 });
+  recorder.onRecordEvent({ type: "press", control: "A", time: 0 });
+  recorder.onRecordEvent({ type: "clear", controls: ["A"], time: 300 });
+  assert.equal(script.steps[0].durationMs, 300);
 });

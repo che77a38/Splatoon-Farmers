@@ -5,7 +5,7 @@ import {
   ManualInputState,
 } from "./manual-input.js";
 import { MockSerialTransport, SerialTransport } from "./serial-transport.js";
-import { Script, emptyScript, stepIcon, formatMs } from "./editor.js";
+import { Script, ScriptRecorder, emptyScript, stepIcon, formatMs } from "./editor.js";
 
 const elements = {
   connectionButton: document.querySelector('[data-testid="connect-button"]'),
@@ -37,6 +37,8 @@ const elements = {
   editorRepeatText: document.querySelector('[data-testid="editor-repeat-text"]'),
   editorClearButton: document.querySelector('[data-testid="editor-clear"]'),
   editorRepeatCheckbox: document.querySelector('[data-testid="editor-repeat"]'),
+  editorRecButton: document.querySelector('[data-testid="editor-rec"]'),
+  editorRecordingHint: document.querySelector('[data-testid="editor-recording-hint"]'),
   editorSteps: document.querySelector('[data-testid="editor-steps"]'),
   editorEmpty: document.querySelector('[data-testid="editor-empty"]'),
 };
@@ -96,6 +98,7 @@ let deviceRoutine = selectedScript;
 // In-browser script for the "custom" picker chip. Owned by app.js, mutated
 // by the editor (later commits add recorder + runner wiring).
 const customScript = emptyScript();
+const scriptRecorder = new ScriptRecorder(customScript);
 
 const mockMode = new URLSearchParams(window.location.search).get("mock") === "1";
 const TransportClass = mockMode ? MockSerialTransport : SerialTransport;
@@ -117,7 +120,17 @@ let activeManualControls = new Set();
 // firmware's actual active script. Cleared as soon as any line is consumed,
 // so STATUS polls never trigger a chip yank.
 let pendingHelloSync = false;
-const manualInputState = new ManualInputState(onManualInputChange);
+// recorderEvent is a host-side bridge: each time ManualInputState notifies
+// us with the new active controls set, we feed the bitmap + dpad back into
+// the recorder so a subsequent press event has an up-to-date snapshot.
+function recorderEvent(event) {
+  scriptRecorder.onRecordEvent(event);
+  // Only refresh the editor card on press/release/clear so we don't thrash
+  // the DOM during multi-source repeated set updates.
+  renderEditorCard();
+}
+
+const manualInputState = new ManualInputState(onManualInputChange, recorderEvent);
 
 elements.durationText.textContent = formatDuration(SCRIPTS[selectedScript].cycleMs);
 syncScriptChipUi();
@@ -159,17 +172,33 @@ function renderEditorCard() {
     elements.editorEmpty.hidden = steps.length > 0;
   }
   if (elements.editorClearButton) {
-    elements.editorClearButton.disabled = steps.length === 0;
+    elements.editorClearButton.disabled = steps.length === 0 || scriptRecorder.active;
   }
   if (elements.editorRepeatCheckbox) {
     elements.editorRepeatCheckbox.checked = customScript.repeat;
-    elements.editorRepeatCheckbox.disabled = false;
+    elements.editorRepeatCheckbox.disabled = scriptRecorder.active;
+  }
+  if (elements.editorRecButton) {
+    elements.editorRecButton.disabled = false;
+    elements.editorRecButton.classList.toggle("is-recording", scriptRecorder.active);
+    elements.editorRecButton.setAttribute(
+      "aria-pressed",
+      String(scriptRecorder.active),
+    );
+    elements.editorRecButton.textContent = scriptRecorder.active ? "■ STOP REC" : "● REC";
+  }
+  if (elements.editorRecordingHint) {
+    elements.editorRecordingHint.hidden = !scriptRecorder.active;
   }
   if (elements.editorStatusText) {
-    elements.editorStatusText.textContent = steps.length === 0 ? "空脚本" : `${steps.length} 步`;
+    elements.editorStatusText.textContent = scriptRecorder.active
+      ? `录制中 · ${steps.length} 步`
+      : (steps.length === 0 ? "空脚本" : `${steps.length} 步`);
   }
   if (elements.editorStatus) {
-    elements.editorStatus.dataset.state = steps.length === 0 ? "empty" : "ready";
+    elements.editorStatus.dataset.state = scriptRecorder.active
+      ? "recording"
+      : (steps.length === 0 ? "empty" : "ready");
   }
 
   if (elements.editorSteps) {
@@ -378,12 +407,20 @@ function onManualInputChange(activeControls) {
     currentStep = 0;
     setError();
   }
+  // Keep the recorder's bitmap/dpad snapshot in sync with the live manual
+  // state. We compute the report here (instead of asking ManualInputState)
+  // because the report already encodes buttons + dpad in the wire format.
+  const report = buildManualReport(activeControls);
+  scriptRecorder.applyActiveSet(activeControls, {
+    buttons: report.buttons,
+    dpad: report.dpad,
+  });
   render();
 
   if (!connected || !transport) {
     return;
   }
-  transport.send(buildManualReport(activeControls).command).catch((error) => {
+  transport.send(report.command).catch((error) => {
     setError(error?.message || "手动输入发送失败");
     render();
   });
@@ -534,6 +571,23 @@ if (elements.editorClearButton) {
 if (elements.editorRepeatCheckbox) {
   elements.editorRepeatCheckbox.addEventListener("change", () => {
     customScript.repeat = elements.editorRepeatCheckbox.checked;
+    renderEditorCard();
+  });
+}
+
+if (elements.editorRecButton) {
+  elements.editorRecButton.addEventListener("click", () => {
+    if (scriptRecorder.active) {
+      scriptRecorder.stop();
+    } else {
+      // Confirm overwrite if a script is already loaded. Skipping when the
+      // script is empty avoids the prompt on first use.
+      if (customScript.steps.length > 0 &&
+          !window.confirm("开始录制会清空当前脚本，确定吗？")) {
+        return;
+      }
+      scriptRecorder.start();
+    }
     renderEditorCard();
   });
 }

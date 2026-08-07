@@ -99,8 +99,13 @@ export function buildManualReport(activeControls) {
 }
 
 export class ManualInputState {
-  constructor(onChange = () => {}) {
+  constructor(onChange = () => {}, onRecordEvent = null) {
     this.onChange = onChange;
+    // Optional recorder hook. Receives a plain object describing the event:
+    //   { type: 'press' | 'release' | 'clear', source, control, time }
+    // Only press/release/clear events trigger this callback (same set as the
+    // existing onChange). When null the recorder pipeline is fully bypassed.
+    this.onRecordEvent = typeof onRecordEvent === "function" ? onRecordEvent : null;
     this.sourceControls = new Map();
     this.controlCounts = new Map();
   }
@@ -126,6 +131,7 @@ export class ManualInputState {
     activeSetChanged = previousCount === 0 || activeSetChanged;
     if (activeSetChanged) {
       this.notify();
+      this.recordEvent({ type: "press", source, control, time: Date.now() });
     }
     return activeSetChanged;
   }
@@ -139,6 +145,7 @@ export class ManualInputState {
     const activeSetChanged = this.decrement(control);
     if (activeSetChanged) {
       this.notify();
+      this.recordEvent({ type: "release", source, control, time: Date.now() });
     }
     return activeSetChanged;
   }
@@ -148,10 +155,14 @@ export class ManualInputState {
       return false;
     }
     const activeSetChanged = this.controlCounts.size > 0;
+    // Snapshot the controls being released so the recorder sees concrete
+    // names even though we wipe the bookkeeping immediately after.
+    const released = Array.from(this.controlCounts.keys());
     this.sourceControls.clear();
     this.controlCounts.clear();
     if (activeSetChanged) {
       this.notify();
+      this.recordEvent({ type: "clear", controls: released, time: Date.now() });
     }
     return activeSetChanged;
   }
@@ -180,5 +191,11 @@ export class ManualInputState {
 
   notify() {
     this.onChange(this.activeControls());
+  }
+
+  recordEvent(detail) {
+    if (typeof this.onRecordEvent === "function") {
+      this.onRecordEvent(detail);
+    }
   }
 }
