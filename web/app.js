@@ -17,6 +17,8 @@ import {
   scriptToJsonUrl,
   scriptDownloadFilename,
   scriptFromFileInput,
+  STEP_TEMPLATES,
+  getStepTemplate,
 } from "./editor.js";
 
 const elements = {
@@ -54,6 +56,8 @@ const elements = {
   editorExportButton: document.querySelector('[data-testid="editor-export"]'),
   editorImportButton: document.querySelector('[data-testid="editor-import"]'),
   editorImportInput: document.querySelector('[data-testid="editor-import-input"]'),
+  editorAddMenu: document.querySelector('[data-testid="editor-add-menu"]'),
+  editorAddLists: document.querySelectorAll('.editor-add-list[data-template-group]'),
   editorSteps: document.querySelector('[data-testid="editor-steps"]'),
   editorEmpty: document.querySelector('[data-testid="editor-empty"]'),
 };
@@ -216,6 +220,13 @@ function renderEditorCard() {
   }
   if (elements.editorImportInput) {
     elements.editorImportInput.disabled = scriptRecorder.active;
+  }
+  if (elements.editorAddMenu) {
+    const summary = elements.editorAddMenu.querySelector(".editor-add-summary");
+    if (summary) summary.style.opacity = scriptRecorder.active ? "0.45" : "1";
+  }
+  for (const item of document.querySelectorAll(".editor-add-item")) {
+    item.disabled = scriptRecorder.active;
   }
   if (elements.editorRepeatCheckbox) {
     elements.editorRepeatCheckbox.checked = customScript.repeat;
@@ -821,6 +832,48 @@ if (!transportSupported) {
 } else if (mockMode) {
   elements.browserNote.textContent =
     "DEMO MODE · 正在使用模拟串口，不会连接真实设备";
+}
+
+// Populate the "+ 添加步骤" menu by splitting STEP_TEMPLATES into their
+// `group` buckets. Each <li> renders a single button; clicking inserts a
+// new step at the end of customScript and closes the details panel.
+if (elements.editorAddMenu && elements.editorAddLists.length) {
+  for (const list of elements.editorAddLists) {
+    const group = list.dataset.templateGroup;
+    const templates = STEP_TEMPLATES.filter((t) => t.group === group);
+    for (const tpl of templates) {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "editor-add-item";
+      btn.dataset.templateId = tpl.id;
+      btn.textContent = tpl.label;
+      btn.addEventListener("click", () => {
+        const step = getStepTemplate(tpl.id);
+        if (!step) return;
+        customScript.steps.push(step);
+        renderEditorCard();
+        scheduleAutoSave();
+        elements.editorAddMenu.removeAttribute("open");
+      });
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+  }
+  // Clicking outside the menu closes it. We attach the listener once at the
+  // document level so it survives re-renders.
+  document.addEventListener("click", (event) => {
+    if (!elements.editorAddMenu.open) return;
+    if (!elements.editorAddMenu.contains(event.target)) {
+      elements.editorAddMenu.removeAttribute("open");
+    }
+  });
+  // Esc closes the menu too.
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.editorAddMenu.open) {
+      elements.editorAddMenu.removeAttribute("open");
+    }
+  });
 }
 
 render();

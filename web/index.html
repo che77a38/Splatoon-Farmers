@@ -226,6 +226,30 @@
         </div>
 
         <div class="editor-toolbar" role="group" aria-label="编辑器工具栏">
+          <details class="editor-add-menu" data-testid="editor-add-menu">
+            <summary
+              class="button button-primary editor-add-summary"
+              data-testid="editor-add"
+            >
+              + 添加步骤
+            </summary>
+            <div class="editor-add-panel" role="menu">
+              <p class="picker-label">FACE 按键</p>
+              <ul class="editor-add-list" data-template-group="face"></ul>
+              <p class="picker-label">SHOULDER 肩键</p>
+              <ul class="editor-add-list" data-template-group="shoulder"></ul>
+              <p class="picker-label">SYSTEM 系统</p>
+              <ul class="editor-add-list" data-template-group="system"></ul>
+              <p class="picker-label">DPAD 方向键</p>
+              <ul class="editor-add-list" data-template-group="dpad"></ul>
+              <p class="picker-label">L STICK 左摇杆</p>
+              <ul class="editor-add-list" data-template-group="lstick"></ul>
+              <p class="picker-label">R STICK 右摇杆</p>
+              <ul class="editor-add-list" data-template-group="rstick"></ul>
+              <p class="picker-label">CONTROL 控制</p>
+              <ul class="editor-add-list" data-template-group="control"></ul>
+            </div>
+          </details>
           <button
             class="button editor-rec-button"
             type="button"

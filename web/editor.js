@@ -209,6 +209,73 @@ export function emptyScript() {
 
 export { newHold, newRelease, newDelay };
 
+// Catalog of named "insert step" actions for the toolbar dropdown. Each
+// entry returns a *new* step ready to be pushed into script.steps. The host
+// app is responsible for choosing a default duration — these helpers only
+// pin the buttons / dpad / sticks fields.
+//
+// `id` is a stable machine-readable name; `label` is the user-visible
+// Chinese label. Stick deflections are limited to 1000 in either direction
+// (the full ±127 range centered at 128 covers every legal axis value).
+export const STEP_TEMPLATES = Object.freeze([
+  // Face buttons — bit indices per manual-input.js BUTTON_BITS (A=2, B=1,
+  // X=3, Y=0).
+  { id: "press-A",   group: "face",  label: "按 A",     build: (ms) => newHold(1 << 2, 15, ms) },
+  { id: "press-B",   group: "face",  label: "按 B",     build: (ms) => newHold(1 << 1, 15, ms) },
+  { id: "press-X",   group: "face",  label: "按 X",     build: (ms) => newHold(1 << 3, 15, ms) },
+  { id: "press-Y",   group: "face",  label: "按 Y",     build: (ms) => newHold(1 << 0, 15, ms) },
+  // Shoulder / trigger buttons.
+  { id: "press-L",    group: "shoulder", label: "按 L",    build: (ms) => newHold(1 << 4, 15, ms) },
+  { id: "press-R",    group: "shoulder", label: "按 R",    build: (ms) => newHold(1 << 5, 15, ms) },
+  { id: "press-ZL",   group: "shoulder", label: "按 ZL",   build: (ms) => newHold(1 << 6, 15, ms) },
+  { id: "press-ZR",   group: "shoulder", label: "按 ZR",   build: (ms) => newHold(1 << 7, 15, ms) },
+  // System / utility.
+  { id: "press-PLUS",    group: "system", label: "按 + (Plus)",  build: (ms) => newHold(1 << 9,  15, ms) },
+  { id: "press-MINUS",   group: "system", label: "按 − (Minus)", build: (ms) => newHold(1 << 8,  15, ms) },
+  { id: "press-CAPTURE", group: "system", label: "按 Capture",   build: (ms) => newHold(1 << 13, 15, ms) },
+  { id: "press-HOME",    group: "system", label: "按 Home",      build: (ms) => newHold(1 << 12, 15, ms) },
+  { id: "press-L3",      group: "system", label: "按 L3",        build: (ms) => newHold(1 << 10, 15, ms) },
+  { id: "press-R3",      group: "system", label: "按 R3",        build: (ms) => newHold(1 << 11, 15, ms) },
+  // D-pad.
+  { id: "dpad-up",        group: "dpad", label: "↑ 方向键上", build: (ms) => newHold(0, 0,  ms) },
+  { id: "dpad-up-right",  group: "dpad", label: "↗ 方向键右上", build: (ms) => newHold(0, 1,  ms) },
+  { id: "dpad-right",     group: "dpad", label: "→ 方向键右", build: (ms) => newHold(0, 2,  ms) },
+  { id: "dpad-down-right",group: "dpad", label: "↘ 方向键右下", build: (ms) => newHold(0, 3,  ms) },
+  { id: "dpad-down",      group: "dpad", label: "↓ 方向键下", build: (ms) => newHold(0, 4,  ms) },
+  { id: "dpad-down-left", group: "dpad", label: "↙ 方向键左下", build: (ms) => newHold(0, 5,  ms) },
+  { id: "dpad-left",      group: "dpad", label: "← 方向键左", build: (ms) => newHold(0, 6,  ms) },
+  { id: "dpad-up-left",   group: "dpad", label: "↖ 方向键左上", build: (ms) => newHold(0, 7,  ms) },
+  // Left stick (analog). Values are signed offsets from center (128).
+  { id: "lstick-up",        group: "lstick", label: "左摇杆 ↑",    build: (ms) => newStick(0, 128, 0, 128, ms) },
+  { id: "lstick-down",      group: "lstick", label: "左摇杆 ↓",    build: (ms) => newStick(0, 255, 0, 128, ms) },
+  { id: "lstick-left",      group: "lstick", label: "左摇杆 ←",    build: (ms) => newStick(0, 128, 0, 128, ms) },
+  { id: "lstick-right",     group: "lstick", label: "左摇杆 →",    build: (ms) => newStick(255, 128, 0, 128, ms) },
+  // Right stick (analog).
+  { id: "rstick-up",        group: "rstick", label: "右摇杆 ↑",    build: (ms) => newStick(128, 128, 128, 0, ms) },
+  { id: "rstick-down",      group: "rstick", label: "右摇杆 ↓",    build: (ms) => newStick(128, 128, 128, 255, ms) },
+  { id: "rstick-left",      group: "rstick", label: "右摇杆 ←",    build: (ms) => newStick(128, 128, 0, 128, ms) },
+  { id: "rstick-right",     group: "rstick", label: "右摇杆 →",    build: (ms) => newStick(128, 128, 255, 128, ms) },
+  // Convenience.
+  { id: "release", group: "control", label: "松开（neutral）", build: (ms) => newRelease(ms) },
+  { id: "delay",   group: "control", label: "等待延时（1000ms）", build: () => newDelay(1000) },
+]);
+
+function newStick(lx, ly, rx, ry, durationMs) {
+  return {
+    type: "hold",
+    buttons: 0,
+    dpad: 15,
+    sticks: [lx | 0, ly | 0, rx | 0, ry | 0],
+    durationMs,
+  };
+}
+
+export function getStepTemplate(id, durationMs = 100) {
+  const tpl = STEP_TEMPLATES.find((t) => t.id === id);
+  if (!tpl) return null;
+  return tpl.build(durationMs);
+}
+
 // Recorder that turns raw press / release events into Script steps. The
 // recorder owns no timers; the host (app.js) provides `time` via the
 // `onRecordEvent` payload, so the class is fully testable under Node

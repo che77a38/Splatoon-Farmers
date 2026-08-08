@@ -15,6 +15,8 @@ import {
   saveScriptToStorage,
   loadScriptFromStorage,
   scriptDownloadFilename,
+  STEP_TEMPLATES,
+  getStepTemplate,
 } from "../../web/editor.js";
 
 test("Script totalMs sums every step duration", () => {
@@ -387,4 +389,50 @@ test("scriptDownloadFilename sanitizes unsafe characters", () => {
   assert.ok(!filename.includes("/"));
   assert.ok(!filename.includes("?"));
   assert.ok(filename.endsWith(".json"));
+});
+
+// --- STEP_TEMPLATES --------------------------------------------------------
+
+test("STEP_TEMPLATES covers every face / shoulder / system key the manual UI exposes", () => {
+  const ids = new Set(STEP_TEMPLATES.map((t) => t.id));
+  // Face buttons
+  ["press-A", "press-B", "press-X", "press-Y"].forEach((id) =>
+    assert.ok(ids.has(id), `${id} missing from STEP_TEMPLATES`));
+  // Shoulders
+  ["press-L", "press-R", "press-ZL", "press-ZR"].forEach((id) =>
+    assert.ok(ids.has(id), `${id} missing from STEP_TEMPLATES`));
+  // System
+  ["press-PLUS", "press-MINUS", "press-CAPTURE", "press-HOME",
+    "press-L3", "press-R3"].forEach((id) =>
+    assert.ok(ids.has(id), `${id} missing from STEP_TEMPLATES`));
+});
+
+test("getStepTemplate('press-PLUS', 250) yields a hold step with PLUS bit and 250ms", () => {
+  const step = getStepTemplate("press-PLUS", 250);
+  assert.ok(step);
+  assert.equal(step.type, "hold");
+  assert.equal(step.buttons, 1 << 9);
+  assert.equal(step.dpad, 15);
+  assert.equal(step.durationMs, 250);
+  assert.deepEqual(step.sticks, [128, 128, 128, 128]);
+});
+
+test("getStepTemplate('release') defaults to a 100ms neutral release", () => {
+  const step = getStepTemplate("release");
+  assert.ok(step);
+  assert.equal(step.type, "release");
+  assert.equal(step.buttons, 0);
+  assert.equal(step.dpad, 15);
+  assert.equal(step.durationMs, 100);
+});
+
+test("getStepTemplate('delay') ignores duration and returns a 1000ms delay", () => {
+  const step = getStepTemplate("delay", 5000);
+  assert.ok(step);
+  assert.equal(step.type, "delay");
+  assert.equal(step.durationMs, 1000);
+});
+
+test("getStepTemplate returns null for unknown id", () => {
+  assert.equal(getStepTemplate("does-not-exist"), null);
 });

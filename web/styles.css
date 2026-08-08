@@ -1433,6 +1433,80 @@ footer {
   font-size: 12px;
 }
 
+.editor-spacer {
+  flex: 1;
+}
+
+.editor-add-menu {
+  position: relative;
+}
+
+.editor-add-menu[open] {
+  z-index: 10;
+}
+
+.editor-add-summary {
+  display: inline-flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.editor-add-summary::-webkit-details-marker {
+  display: none;
+}
+
+.editor-add-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 11;
+  min-width: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: rgba(7, 29, 25, 0.96);
+  border: 1px solid rgba(30, 224, 189, 0.35);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  clip-path: polygon(4px 0, 100% 2px, calc(100% - 3px) 100%, 0 calc(100% - 5px));
+}
+
+.editor-add-panel .picker-label {
+  margin: 8px 0 4px;
+}
+
+.editor-add-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+
+.editor-add-item {
+  cursor: pointer;
+  padding: 6px 8px;
+  background: rgba(30, 224, 189, 0.08);
+  border: 1px solid rgba(30, 224, 189, 0.25);
+  color: var(--paper);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  clip-path: polygon(2px 0, 100% 1px, calc(100% - 2px) 100%, 0 calc(100% - 3px));
+}
+
+.editor-add-item:hover:not(:disabled) {
+  background: rgba(30, 224, 189, 0.22);
+}
+
+.editor-add-item:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.4);
+  opacity: 0.4;
+}
+
 .editor-repeat-toggle {
   display: inline-flex;
   align-items: center;
