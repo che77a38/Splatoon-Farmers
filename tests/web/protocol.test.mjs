@@ -22,7 +22,7 @@ test("handles compatibility responses and malformed input", () => {
 });
 
 test("formats the complete embedded cycle", () => {
-  assert.equal(formatDuration(63595), "01:03.595");
+  assert.equal(formatDuration(64995), "01:04.995");
 });
 
 test("mock transport follows HELLO, START, STATUS and STOP", async () => {

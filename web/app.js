@@ -78,7 +78,7 @@ const SCRIPTS = {
     label: "杏棱巢穴",
     command: "START",
     stepCount: 48,
-    cycleMs: 63595,
+    cycleMs: 64995,
   },
   "apricot-den": {
     label: "天妇罗巢穴",

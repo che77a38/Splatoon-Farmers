@@ -22,7 +22,7 @@ test("the board-resident routine remains a compact 48-step constant", async () =
   assert.equal(steps.length, 48);
   assert.equal(
     steps.reduce((total, step) => total + step.duration, 0),
-    61010,
+    62410,
   );
   assert.ok(steps.every((step) => step.duration > 0));
   assert.equal(steps[0].report, "kReportX");

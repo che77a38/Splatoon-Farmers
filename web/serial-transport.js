@@ -167,9 +167,9 @@ export class MockSerialTransport {
     } else {
       this.routine = "material-farm";
       this.steps = 48;
-      this.durationMs = 61010;
+      this.durationMs = 62410;
       this.loopGapMs = 2585;
-      this.cycleMs = 63595;
+      this.cycleMs = 64995;
     }
   }
 

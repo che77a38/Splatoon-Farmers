@@ -11,9 +11,9 @@ namespace {
 
 void testEmbeddedMacroMetadata() {
   assert(farmers::kMaterialFarmStepCount == 48);
-  assert(farmers::materialFarmDurationFromSteps() == 61010);
+  assert(farmers::materialFarmDurationFromSteps() == 62410);
   assert(farmers::kMaterialFarmLoopGapMs == 2585);
-  assert(farmers::kMaterialFarmCycleMs == 63595);
+  assert(farmers::kMaterialFarmCycleMs == 64995);
   assert(sizeof(farmers::kMaterialFarmMacro) == 576);
 }
 

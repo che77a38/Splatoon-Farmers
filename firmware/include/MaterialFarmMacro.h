@@ -73,25 +73,27 @@ inline constexpr MacroStep kMaterialFarmMacro[] = {
     {1090, kLeftRight},
     {2070, kLeftLeft},
     {2130, kNeutralReport},
-    {240, kReportA},
-    {120, kNeutralReport},
-    {3220, kNeutralReport},
-    {230, kReportA},
-    {1740, kNeutralReport},
-    {290, kReportA},
-    {1870, kNeutralReport},
-    {215, kReportA},
-    {1870, kNeutralReport},
-    {220, kReportA},
-    {1620, kNeutralReport},
-    {170, kReportA},
-    {870, kNeutralReport},
-    {240, kReportA},
+    // 8. 收尾 + 多段 A 拍 — 每个延时在原版基础上 +100ms, 让 Splatoon 动画
+// 喘息 (用户要求)。
+    {340, kReportA},
+    {220, kNeutralReport},
+    {3320, kNeutralReport},
+    {330, kReportA},
+    {1840, kNeutralReport},
+    {390, kReportA},
+    {1970, kNeutralReport},
+    {315, kReportA},
+    {1970, kNeutralReport},
+    {320, kReportA},
+    {1720, kNeutralReport},
+    {270, kReportA},
+    {970, kNeutralReport},
+    {340, kReportA},
 };
 
 inline constexpr size_t kMaterialFarmStepCount =
     sizeof(kMaterialFarmMacro) / sizeof(kMaterialFarmMacro[0]);
-inline constexpr uint32_t kMaterialFarmDurationMs = 61010;
+inline constexpr uint32_t kMaterialFarmDurationMs = 62410;
 inline constexpr uint32_t kMaterialFarmLoopGapMs = 2585;
 inline constexpr uint32_t kMaterialFarmCycleMs =
     kMaterialFarmDurationMs + kMaterialFarmLoopGapMs;
