@@ -2,6 +2,7 @@
 .idea/
 .pio/
 .vscode/
+.refact/
 __pycache__/
 node_modules/
 coverage/
