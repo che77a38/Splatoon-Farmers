@@ -859,6 +859,13 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+// The unsupported-browser warning only fires when the chosen transport
+// cannot be supported at all on the current browser. With the default
+// now being WebSocket (which is universal in every browser we care
+// about), the only realistic way to land here is on a non-browser
+// environment — in practice the warning is dead code. We still keep
+// the guard so future transports (e.g. a hypothetical WebUSB path)
+// can opt in to the warning by reporting isSupported() === false.
 if (!transportSupported) {
   elements.connectionButton.disabled = true;
   elements.browserNote.textContent =
@@ -867,6 +874,17 @@ if (!transportSupported) {
 } else if (mockMode) {
   elements.browserNote.textContent =
     "DEMO MODE · 正在使用模拟串口，不会连接真实设备";
+} else if (transportKind === "wifi") {
+  // WiFi path active — the page is talking to the board over
+  // splatoon.local. Show the hostname so the user knows which
+  // address to type if mDNS does not work on their network.
+  elements.browserNote.textContent =
+    `WiFi 模式 · 板子地址 ${httpHost}`;
+  elements.browserNote.dataset.warning = "";
+} else if (transportKind === "serial") {
+  elements.browserNote.textContent =
+    "USB 串口模式 · 板子需通过 CH340 接到电脑";
+  elements.browserNote.dataset.warning = "";
 }
 
 // Populate the "+ 添加步骤" menu by splitting STEP_TEMPLATES into their
