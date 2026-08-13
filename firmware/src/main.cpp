@@ -8,6 +8,8 @@
 #include "ApricotDenMacro.h"
 #include "ApricotDenInkbackMacro.h"
 #include "MacroEngine.h"
+#include "config_store.h"
+#include "wifi_manager.h"
 #include "switch_ESP32.h"
 
 /*
@@ -37,6 +39,12 @@ farmers::MacroEngine ApricotMacro(
 farmers::MacroEngine ApricotInkbackMacro(
     farmers::kApricotDenInkbackMacro, farmers::kApricotDenInkbackStepCount,
     farmers::kApricotDenInkbackLoopGapMs, true);
+
+// Persistent config (NVS) + WiFi AP/STA state machine. These are owned at
+// file scope so the existing serial-protocol handlers (handleLine, etc.)
+// can route through the same code paths. Lifetime covers the whole app.
+farmers::ConfigStore Config;
+farmers::WifiManager Wifi;
 
 // Currently selected macro for START* commands. STOP is script-agnostic.
 enum class ActiveScript : uint8_t { kMaterial, kApricot, kApricotInkback };
@@ -324,12 +332,20 @@ void readControlSerial() {
 //   2 taps -> 天妇罗巢穴 (apricot-den, 35 steps)
 //   3 taps -> 天妇罗回墨 (apricot-den-inkback, 100 steps)
 //   0 taps -> idle, wait for the web UI / serial command
+// If BOOT is *held* for kBootResetWindowMs (5 s) — a much longer press
+// than the tap counter debounce — we wipe the saved WiFi credentials
+// and bounce the device back to AP provisioning mode. LED blinks while
+// the hold timer is in flight so the user can see what's happening.
 // GPIO48 is the on-board RGB LED on ESP32-S3-DevKitC-1 (active-low); we
-// blink it during the selection window so the user has a visual cue.
+// blink it during the selection / reset windows so the user has a visual
+// cue.
 constexpr uint8_t kBootPin = 0;
 constexpr uint8_t kLedPin = 48;
 constexpr uint32_t kBootSelectWindowMs = 3000;
+constexpr uint32_t kBootResetWindowMs = 5000;
 constexpr uint32_t kBootDebounceMs = 50;
+
+bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs);
 
 // Count BOOT-button presses within the selection window. Returns 0..3.
 // The window starts when setup() returns; we use millis() as a monotonic
@@ -383,9 +399,21 @@ void autoStartFromBoot() {
   delay(100);
   digitalWrite(kLedPin, HIGH);
 
+  // Step 1: 3-second script-selector window. Counts short taps.
   const uint32_t presses = readBootPressCount(start);
   digitalWrite(kLedPin, presses > 0 ? LOW : HIGH);
-  if (presses == 0) return;
+  if (presses == 0) {
+    // Step 2: detect a long-press for WiFi reset. We restart the LED
+    // pattern so the user can see the hold timer ticking.
+    if (waitForBootLongPress(start, kBootResetWindowMs)) {
+      Serial.println("[BOOT] long-press detected -> clearing WiFi credentials");
+      Wifi.resetCredentials();
+      // LED stays on (now AP) so the user knows the device is ready to
+      // be re-provisioned.
+      digitalWrite(kLedPin, LOW);
+    }
+    return;
+  }
 
   // 1=material, 2=apricot, 3=apricot-inkback
   if (presses == 1) Active = ActiveScript::kMaterial;
@@ -401,21 +429,82 @@ void autoStartFromBoot() {
   digitalWrite(kLedPin, LOW);
 }
 
+// Detect a continuous low on the BOOT line for at least threshold ms,
+// starting from startMs. Returns true if the press was long enough. The
+// LED is pulsed at 4 Hz during the hold so the user can see the timer
+// tick. We abort early as soon as the user releases so accidental
+// presses do not trigger a reset.
+bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
+  // First, wait until BOOT is actually down (otherwise the user is
+  // not pressing at all).
+  while (digitalRead(kBootPin) == HIGH) {
+    if (millis() - startMs > kBootSelectWindowMs) return false;
+    delay(5);
+  }
+  // Now measure the duration of the continuous press.
+  const uint32_t pressStart = millis();
+  uint32_t nextBlink = pressStart;
+  while (digitalRead(kBootPin) == LOW) {
+    const uint32_t held = millis() - pressStart;
+    if (held >= thresholdMs) {
+      // Reset triggered. Run a couple of fast blinks to confirm.
+      for (int i = 0; i < 3; ++i) {
+        digitalWrite(kLedPin, LOW);
+        delay(60);
+        digitalWrite(kLedPin, HIGH);
+        delay(60);
+      }
+      return true;
+    }
+    if (millis() >= nextBlink) {
+      digitalWrite(kLedPin, !digitalRead(kLedPin));
+      nextBlink = millis() + 125;  // 4 Hz
+    }
+    delay(5);
+  }
+  return false;  // released before threshold
+}
+
 void setup() {
+  // Open the control serial first so the WiFi banner is visible.
+  ATT_CONTROL_SERIAL.begin(kControlBaudRate);
+  Serial.println("[boot] setup() enter");
+  // Silence the TinyUSB "SendReport not ready" log spam. The library
+  // logs at ERROR every ~5 ms while no Switch is plugged in, which
+  // buries our own Serial output. We don't need those errors: the
+  // gamepad's working state is observable via the normal status path.
+  esp_log_level_set("USBHID", ESP_LOG_NONE);
   pinMode(kBootPin, INPUT_PULLUP);
   pinMode(kLedPin, OUTPUT);
   digitalWrite(kLedPin, HIGH); // off (active-low LED)
-  ATT_CONTROL_SERIAL.begin(kControlBaudRate);
   Gamepad.begin();
   USB.begin();
   applyReport(farmers::kNeutralReport);
+  Serial.println("[boot] before Config.begin");
+  // Persistent NVS-backed config must open before the WiFi manager can
+  // decide between STA and AP. The macro engine auto-start is delayed
+  // until *after* WiFi initialization so the BOOT window can also detect
+  // the "hold for reset" gesture.
+  Config.begin();
+  Serial.println("[boot] after Config.begin");
+  Wifi.begin(&Config);
+  Serial.printf("[WiFi] mode=%s, status=%s, ip=%s, ap_ssid=%s\n",
+                Wifi.mode() == farmers::WifiMode::kSta       ? "sta" :
+                Wifi.mode() == farmers::WifiMode::kStaConnecting ? "sta-connecting" : "ap",
+                Wifi.statusMessage(), Wifi.localIp().c_str(),
+                Wifi.apSsid().c_str());
   // Decide at boot whether to auto-start a script based on the BOOT-button
   // press count. Runs once; subsequent resets behave the same way.
+  Serial.println("[boot] before autoStartFromBoot");
   autoStartFromBoot();
+  Serial.println("[boot] setup() done");
 }
 
 void loop() {
   readControlSerial();
+  // Drive the WiFi reconnect / AP-fallback state machine. Cheap when the
+  // connection is steady (kSta path is a single WiFi.status() check).
+  Wifi.tick();
   // Tick whichever script is active. The non-active engine stays stopped.
   // Skip the tick entirely while the host is driving raw frames via
   // STREAM — the engines are stopped at that point and ticking them would
