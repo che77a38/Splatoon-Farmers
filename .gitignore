@@ -8,6 +8,9 @@ node_modules/
 coverage/
 dist/
 autotableturf/
+# firmware/data/ is a build artifact (output of `cp web/* firmware/data/`
+# before `pio run -t uploadfs`). The authoritative source is web/.
+firmware/data/
 
 .env
 .env.*
