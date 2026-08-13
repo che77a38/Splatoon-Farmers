@@ -292,3 +292,13 @@ pio run -t uploadfs
 - 端到端 R 帧 + Gamepad.write() 接通在 commit 6 标记为已知 gap（web_server.cpp 内的 wsRawReport 只回 OK 不实际调 Gamepad）——commit 8 之后 commit 9+ 期间会补
 - HTTPS / 自签证书：v1 全部 HTTP+WS；`secure: true` 选项已留在 HttpTransport ctor 里
 - 单客户端 WS：AsyncWebServer 支持多并发但未测
+
+### 常见故障
+
+**症状：浏览器只看到 HTML 骨架（没有样式、没有按钮交互）**
+
+根因：AsyncWebServer 的 `onNotFound` 路由注册顺序——如果在 `serveStatic` 之前，所有未匹配请求（包括 `/styles.css`、`/app.js`）被重定向到 `/provision`。**修法**：`serveStatic` 必须先注册（commit 10）。如果用户看到骨架，先 `Cmd+Shift+R` 强刷；再不行就 `pio run -t uploadfs` 重烧 data partition。
+
+**症状：浏览器 404 所有路径**
+
+根因：data partition 没烧或烧错。检查 `firmware/data/index.html` 存在 + `pio run -t uploadfs` 成功。
