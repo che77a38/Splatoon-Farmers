@@ -139,12 +139,14 @@ function scheduleAutoSave() {
 }
 
 const mockMode = new URLSearchParams(window.location.search).get("mock") === "1";
-// Transport selection. The user can force a transport with ?transport=ws
-// (WebSocket only) or ?transport=serial (Web Serial only). Without the
-// override we prefer Web Serial if the browser supports it (zero infra
-// needed; the user just plugs in the CH340 cable), and fall back to
-// WebSocket if Serial is unavailable. The default WebSocket host is
-// splatoon.local — overridable with ?host=192.168.x.x.
+// Transport selection. The default is WebSocket (board on the LAN at
+// splatoon.local) because the WiFi mode is the primary path for
+// headless use — the user just opens a browser, no cable needed. Web
+// Serial is the legacy path used only when developing against a CH340
+// over USB, which the user can opt into with ?transport=serial.
+// The default WebSocket host is splatoon.local — overridable with
+// ?host=192.168.x.x. With ?transport=auto we pick the first
+// transport that the browser supports (Serial if available, else WS).
 const urlParams = new URLSearchParams(window.location.search);
 const forcedTransport = urlParams.get("transport");
 const httpHost = urlParams.get("host") || "splatoon.local";
@@ -152,7 +154,13 @@ const TransportClass = (() => {
   if (mockMode) return MockSerialTransport;
   if (forcedTransport === "ws") return HttpTransport;
   if (forcedTransport === "serial") return SerialTransport;
-  if (SerialTransport.isSupported()) return SerialTransport;
+  if (forcedTransport === "auto") {
+    if (SerialTransport.isSupported()) return SerialTransport;
+    return HttpTransport;
+  }
+  // Default: WiFi / WebSocket. The board's mDNS name is enough for
+  // most home networks; the user can fall back to ?host= when mDNS
+  // is blocked.
   return HttpTransport;
 })();
 const transportSupported = TransportClass.isSupported();
