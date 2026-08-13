@@ -48,7 +48,12 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
   // the onNotFound fallback below so that the captive redirect
   // only fires for genuinely-missing paths (and not for /styles.css,
   // /app.js, /editor.js, etc., which a browser automatically fetches
-  // after loading index.html).
+  // after loading index.html). The explicit on() routes registered
+  // later (e.g. /api/scan) take priority over this prefix matcher
+  // because AsyncWebServer's internal routing order is "more specific
+  // wins".
+  server_->serveStatic("/", LittleFS, "/")
+      .setDefaultFile("index.html");
 
   // Captive-portal DNS: in AP mode, every DNS query returns the softAP
   // IP so the OS auto-opens the portal page when the user joins the
