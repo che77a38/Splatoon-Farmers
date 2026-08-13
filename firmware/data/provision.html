@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SplatoonFarmers · WiFi 配网</title>
+<style>
+  body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;margin:0;background:#0a1612;color:#d6e7e0;padding:24px;}
+  h1{margin:0 0 8px;font-size:18px;color:#ffd505;}
+  p.lede{margin:0 0 20px;color:#7da094;font-size:12px;}
+  fieldset{border:1px solid #1f3a32;border-radius:6px;padding:12px 16px;margin:0 0 14px;}
+  legend{padding:0 8px;color:#7da094;font-size:11px;letter-spacing:.1em;text-transform:uppercase;}
+  label{display:block;font-size:12px;color:#9bb8ae;margin:0 0 4px;}
+  select,input{width:100%;box-sizing:border-box;background:#0a1612;color:#d6e7e0;border:1px solid #2a4a40;border-radius:4px;padding:8px 10px;font-size:14px;}
+  select:focus,input:focus{outline:1px solid #ffd505;border-color:#ffd505;}
+  button{display:inline-block;background:#ffd505;color:#3a2f00;border:0;border-radius:4px;padding:10px 16px;font-weight:700;font-size:14px;cursor:pointer;margin-right:8px;}
+  button.secondary{background:transparent;color:#9bb8ae;border:1px solid #2a4a40;}
+  .row{display:flex;gap:12px;align-items:end;}
+  .row > div{flex:1;}
+  .status{margin-top:14px;padding:10px 12px;border-radius:4px;font-size:12px;background:#1a2c25;border:1px solid #2a4a40;}
+  .status.ok{color:#9ed4a3;border-color:#356d3d;background:#16321d;}
+  .status.err{color:#e58989;border-color:#7a3030;background:#321616;}
+  .scan-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;}
+  .scan-row .ssid{flex:1;}
+  .scan-row .rssi{color:#7da094;font-size:11px;font-family:ui-monospace,monospace;}
+  .footer{margin-top:24px;font-size:11px;color:#5d7a72;}
+</style>
+</head>
+<body>
+<h1>配网</h1>
+<p class="lede">板子当前在 AP 配网模式。选择你的 WiFi、输入密码，板子会保存并重启进入 STA 模式。</p>
+
+<fieldset>
+  <legend>当前</legend>
+  <div id="now">加载中...</div>
+</fieldset>
+
+<fieldset>
+  <legend>扫描附近 WiFi</legend>
+  <button id="scan" class="secondary" type="button">重新扫描</button>
+  <div id="scan-results" style="margin-top:10px;">（点击扫描）</div>
+</fieldset>
+
+<form id="form">
+  <fieldset>
+    <legend>WiFi 凭证</legend>
+    <div class="row">
+      <div>
+        <label for="ssid">SSID</label>
+        <select id="ssid" name="ssid" required></select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div>
+        <label for="pass">密码（开放网络留空）</label>
+        <input id="pass" name="pass" type="password" autocomplete="new-password" placeholder="">
+      </div>
+    </div>
+    <div style="margin-top:14px;">
+      <button type="submit">保存并重启</button>
+      <button type="button" class="secondary" id="reset">清空并重配</button>
+    </div>
+  </fieldset>
+</form>
+
+<div id="status" class="status" style="display:none;"></div>
+
+<div class="footer">
+  配网后访问 <code id="hostname">splatoon.local</code>。若 mDNS 失败，从串口监视器看 IP。
+</div>
+
+<script>
+async function refreshStatus(){
+  const r = await fetch('/api/status');
+  if(!r.ok) return;
+  const j = await r.json();
+  document.getElementById('now').innerHTML =
+    '<div class="scan-row"><span class="ssid">模式</span><span class="rssi">'+j.mode+'</span></div>' +
+    '<div class="scan-row"><span class="ssid">状态</span><span class="rssi">'+j.status+'</span></div>' +
+    '<div class="scan-row"><span class="ssid">IP</span><span class="rssi">'+j.ip+'</span></div>' +
+    '<div class="scan-row"><span class="ssid">mDNS</span><span class="rssi">'+j.mdns+'.local</span></div>';
+}
+
+async function refreshScan(){
+  const target = document.getElementById('scan-results');
+  target.textContent = '扫描中...';
+  const r = await fetch('/api/scan');
+  if(!r.ok){target.textContent='扫描失败';return;}
+  const list = await r.json();
+  if(!list.length){target.textContent='没扫到任何网络';return;}
+  target.innerHTML = '';
+  for(const n of list){
+    const row = document.createElement('div');
+    row.className = 'scan-row';
+    const rssi = n.rssi.toString().padStart(4,' ') + ' dBm';
+    const sec = n.secure ? '🔒' : '  ';
+    row.innerHTML = '<span class="ssid"><a href="#" data-ssid="'+n.ssid.replace(/"/g,'&quot;')+'">'+n.ssid+'</a> '+sec+'</span><span class="rssi">'+rssi+'</span>';
+    row.querySelector('a').onclick = (e)=>{e.preventDefault();
+      const sel=document.getElementById('ssid');
+      const opt=Array.from(sel.options).find(o=>o.value===n.ssid);
+      if(!opt){const o=document.createElement('option');o.value=n.ssid;o.text=n.ssid;sel.appendChild(o);}
+      sel.value=n.ssid;};
+    target.appendChild(row);
+  }
+}
+
+async function submitForm(e){
+  e.preventDefault();
+  const ssid=document.getElementById('ssid').value;
+  const pass=document.getElementById('pass').value;
+  if(!ssid){showStatus('请先选 SSID',true);return;}
+  const status=document.getElementById('status');
+  status.className='status';
+  status.style.display='block';
+  status.textContent='保存中...';
+  const r=await fetch('/api/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,pass})});
+  if(!r.ok){showStatus('保存失败',true);return;}
+  showStatus('已保存,板子 2 秒后重启...',false);
+  setTimeout(()=>{location.reload();}, 6000);
+}
+
+async function resetWifi(){
+  if(!confirm('清空已保存的 WiFi 凭证?')) return;
+  const r=await fetch('/api/reset',{method:'POST'});
+  if(!r.ok){showStatus('重置失败',true);return;}
+  showStatus('已清空,板子即将进入 AP 模式',false);
+}
+
+function showStatus(text, isErr){
+  const s=document.getElementById('status');
+  s.className = 'status ' + (isErr?'err':'ok');
+  s.textContent = text;
+  s.style.display = 'block';
+}
+
+document.getElementById('scan').onclick = refreshScan;
+document.getElementById('form').onsubmit = submitForm;
+document.getElementById('reset').onclick = resetWifi;
+refreshStatus();
+refreshScan();
+setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>

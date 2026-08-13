@@ -168,6 +168,21 @@ uint8_t WifiManager::apClients() const {
   return WiFi.softAPgetStationNum();
 }
 
+IPAddress WifiManager::softApIp() const {
+  return WiFi.softAPIP();
+}
+
+int WifiManager::scanNetworks(bool async, bool show_hidden) {
+  return WiFi.scanNetworks(async, show_hidden);
+}
+
+String WifiManager::scanSsid(int i)        { return WiFi.SSID(i); }
+int32_t WifiManager::scanRssi(int i)        { return WiFi.RSSI(i); }
+uint8_t WifiManager::scanEncryptionType(int i) {
+  return WiFi.encryptionType(i);
+}
+void WifiManager::scanDelete()               { WiFi.scanDelete(); }
+
 bool WifiManager::startMdns() {
   // "splatoon" is short and memorable; if the network already has
   // something called that (e.g. another SplatoonFarmers device)

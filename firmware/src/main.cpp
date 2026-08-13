@@ -10,6 +10,7 @@
 #include "MacroEngine.h"
 #include "config_store.h"
 #include "wifi_manager.h"
+#include "web_server.h"
 #include "switch_ESP32.h"
 
 /*
@@ -40,11 +41,13 @@ farmers::MacroEngine ApricotInkbackMacro(
     farmers::kApricotDenInkbackMacro, farmers::kApricotDenInkbackStepCount,
     farmers::kApricotDenInkbackLoopGapMs, true);
 
-// Persistent config (NVS) + WiFi AP/STA state machine. These are owned at
-// file scope so the existing serial-protocol handlers (handleLine, etc.)
-// can route through the same code paths. Lifetime covers the whole app.
+// Persistent config (NVS) + WiFi AP/STA state machine + web server.
+// These are owned at file scope so the existing serial-protocol handlers
+// (handleLine, etc.) can route through the same code paths. Lifetime
+// covers the whole app.
 farmers::ConfigStore Config;
 farmers::WifiManager Wifi;
+farmers::WebServer Http;
 
 // Currently selected macro for START* commands. STOP is script-agnostic.
 enum class ActiveScript : uint8_t { kMaterial, kApricot, kApricotInkback };
@@ -482,6 +485,7 @@ void setup() {
   Config.begin();
   Serial.println("[boot] after Config.begin");
   Wifi.begin(&Config);
+  Http.begin(&Config, &Wifi);
   Serial.printf("[WiFi] mode=%s, status=%s, ip=%s, ap_ssid=%s, mdns=%s.local\n",
                 Wifi.mode() == farmers::WifiMode::kSta       ? "sta" :
                 Wifi.mode() == farmers::WifiMode::kStaConnecting ? "sta-connecting" : "ap",
@@ -497,6 +501,9 @@ void loop() {
   // Drive the WiFi reconnect / AP-fallback state machine. Cheap when the
   // connection is steady (kSta path is a single WiFi.status() check).
   Wifi.tick();
+  // Drive the captive-portal DNS server + any pending deferred restart
+  // from a /api/wifi or /api/reset POST.
+  Http.tick();
   // Tick whichever script is active. The non-active engine stays stopped.
   // Skip the tick entirely while the host is driving raw frames via
   // STREAM — the engines are stopped at that point and ticking them would

@@ -32,11 +32,23 @@ class WifiManager {
   // Mode + address accessors. localIp() is empty until kSta is reached.
   WifiMode mode() const { return mode_; }
   String localIp() const;
+  // SoftAP gateway IP (192.168.4.1 by default). Always valid in AP mode;
+  // returns empty in STA mode.
+  IPAddress softApIp() const;
   String apSsid() const { return ap_ssid_; }
   uint8_t apClients() const;
   // mDNS host label, e.g. "splatoon" — users visit
   // http://splatoon.local instead of typing the IP.
   String mdnsName() const { return mdns_name_; }
+  // WiFi scan accessors used by the captive portal's /api/scan. The
+  // underlying WiFi.scanNetworks stores results in a static array
+  // owned by the framework; we forward the calls so the web server
+  // doesn't need to include <WiFi.h> directly.
+  int scanNetworks(bool async = false, bool show_hidden = true);
+  String scanSsid(int i);
+  int32_t scanRssi(int i);
+  uint8_t scanEncryptionType(int i);
+  void scanDelete();
 
   // Forget saved credentials + jump to AP. Used by the captive portal's
   // "reset" button and by the long-press BOOT path.
