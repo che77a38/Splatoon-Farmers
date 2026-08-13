@@ -5,6 +5,7 @@ import {
   ManualInputState,
 } from "./manual-input.js";
 import { MockSerialTransport, SerialTransport } from "./serial-transport.js";
+import { HttpTransport } from "./http-transport.js";
 import {
   Script,
   ScriptRecorder,
@@ -138,8 +139,29 @@ function scheduleAutoSave() {
 }
 
 const mockMode = new URLSearchParams(window.location.search).get("mock") === "1";
-const TransportClass = mockMode ? MockSerialTransport : SerialTransport;
+// Transport selection. The user can force a transport with ?transport=ws
+// (WebSocket only) or ?transport=serial (Web Serial only). Without the
+// override we prefer Web Serial if the browser supports it (zero infra
+// needed; the user just plugs in the CH340 cable), and fall back to
+// WebSocket if Serial is unavailable. The default WebSocket host is
+// splatoon.local — overridable with ?host=192.168.x.x.
+const urlParams = new URLSearchParams(window.location.search);
+const forcedTransport = urlParams.get("transport");
+const httpHost = urlParams.get("host") || "splatoon.local";
+const TransportClass = (() => {
+  if (mockMode) return MockSerialTransport;
+  if (forcedTransport === "ws") return HttpTransport;
+  if (forcedTransport === "serial") return SerialTransport;
+  if (SerialTransport.isSupported()) return SerialTransport;
+  return HttpTransport;
+})();
 const transportSupported = TransportClass.isSupported();
+// The transport kind we ended up with — used by the UI to show
+// "Connected via WiFi" vs "Connected via USB" so the user knows
+// which path the page is talking over.
+const transportKind = TransportClass === SerialTransport ? "serial"
+                    : TransportClass === HttpTransport    ? "wifi"
+                    : "mock";
 
 let transport = null;
 let connected = false;
@@ -337,7 +359,9 @@ function syncScriptChipUi() {
 function render() {
   const manualActive = connected && activeManualControls.size > 0;
   const running = connected && deviceState === "running" && !manualActive;
-  elements.connectionButton.textContent = connected ? "断开串口" : "连接手柄";
+  elements.connectionButton.textContent = connected
+    ? (transportKind === "wifi" ? "断开 WiFi" : "断开串口")
+    : "连接手柄";
   elements.connectionButton.disabled = busy || !transportSupported;
   elements.startButton.disabled = busy || !connected || running || manualActive;
   elements.stopButton.disabled = busy || !connected || !running;
@@ -383,7 +407,9 @@ function render() {
     elements.statusText.textContent = "远征执行中";
     elements.detailText.textContent = `脚本在 ESP32-S3 本地执行 · 第 ${currentStep}/${stepCount} 步`;
   } else {
-    elements.statusText.textContent = "已连接 · 待命";
+    elements.statusText.textContent = connected
+      ? (transportKind === "wifi" ? `已通过 WiFi (${httpHost}) 连接` : "已连接 · 待命")
+      : "未连接";
     elements.detailText.textContent = "素材脚本已固化在 Flash，点击即可从第 1 步出发";
   }
 
@@ -499,6 +525,7 @@ async function connect() {
   transport = new TransportClass({
     onLine,
     onDisconnect: onUnexpectedDisconnect,
+    host: httpHost,
   });
   try {
     await transport.connect();
