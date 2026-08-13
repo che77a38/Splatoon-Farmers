@@ -1,5 +1,7 @@
 #include "wifi_manager.h"
 
+#include <ESPmDNS.h>
+#include <esp_log.h>
 #include <WiFi.h>
 
 namespace farmers {
@@ -33,6 +35,13 @@ uint32_t WifiManager::backoffMs(uint8_t attempt) {
 }
 
 void WifiManager::begin(ConfigStore* config) {
+  // Silence the TinyUSB USBHID log spam before anything else. The
+  // library prints SendReport-not-ready at ERROR every 5 ms while no
+  // Switch is plugged in, which drowns out our own Serial output. The
+  // gamepad's working state is still observable through the existing
+  // STATUS JSON path.
+  esp_log_level_set("USBHID", ESP_LOG_NONE);
+
   config_ = config;
 
   // Build a stable AP SSID using the chip's MAC tail so two boards in
@@ -80,6 +89,12 @@ void WifiManager::startAp() {
   Serial.printf("[WiFi] AP up: SSID=%s, IP=%s\n",
                 ap_ssid_.c_str(),
                 WiFi.softAPIP().toString().c_str());
+  // Announce over mDNS so users can type http://splatoon.local to reach
+  // the captive portal. The IP is the softAP gateway (192.168.4.1 by
+  // default). If "splatoon" is already taken, append a per-device tag.
+  if (!startMdns()) {
+    ensureUniqueMdnsName();
+  }
 }
 
 void WifiManager::tick() {
@@ -113,6 +128,12 @@ void WifiManager::onStaGotIp() {
   last_ip_ = WiFi.localIP().toString();
   Serial.printf("[WiFi] connected: SSID=%s, IP=%s\n",
                 WiFi.SSID().c_str(), last_ip_.c_str());
+  // Bring up mDNS as soon as the IP is real so the user can hit
+  // http://splatoon.local right away. If the name is already taken
+  // (another device on the LAN claimed it first) fall back to a
+  // per-device suffix so the two collide silently instead of
+  // mDNS refusing to start.
+  startMdns();
 }
 
 void WifiManager::onStaDisconnected(wl_status_t status) {
@@ -145,6 +166,45 @@ String WifiManager::localIp() const {
 
 uint8_t WifiManager::apClients() const {
   return WiFi.softAPgetStationNum();
+}
+
+bool WifiManager::startMdns() {
+  // "splatoon" is short and memorable; if the network already has
+  // something called that (e.g. another SplatoonFarmers device)
+  // MDNS.begin returns false, and we fall through to ensureUniqueMdnsName().
+  const String& name = mdns_name_;
+  if (!MDNS.begin(name.c_str())) {
+    Serial.printf("[mDNS] '%s' name conflict; trying unique suffix\n",
+                  name.c_str());
+    return false;
+  }
+  MDNS.addService("http", "tcp", 80);
+  Serial.printf("[mDNS] responder up: %s.local -> %s\n", name.c_str(),
+                last_ip_.c_str());
+  return true;
+}
+
+String WifiManager::ensureUniqueMdnsName() {
+  // Use the last 3 bytes of the MAC address as a short unique tag.
+  // "splatoon-a3f" is still 12 characters and the LAN won't have a
+  // collision unless the user is running dozens of these.
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char suffix[5];
+  snprintf(suffix, sizeof(suffix), "%02x%02x", mac[4], mac[5]);
+  mdns_name_ = String("splatoon-") + suffix;
+  if (!MDNS.begin(mdns_name_.c_str())) {
+    // Two of our own devices with the same MAC tail would be unusual
+    // (and impossible on a single LAN) but if it ever happens, the
+    // last fallback is the full MAC. We just log and move on — the
+    // device will still be reachable via its IP.
+    mdns_name_ = String("splatoon-") + String((uint32_t)(ESP.getEfuseMac() >> 8), HEX);
+    MDNS.begin(mdns_name_.c_str());
+  }
+  MDNS.addService("http", "tcp", 80);
+  Serial.printf("[mDNS] responder up: %s.local -> %s\n", mdns_name_.c_str(),
+                last_ip_.c_str());
+  return mdns_name_;
 }
 
 void WifiManager::resetCredentials() {

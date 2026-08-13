@@ -34,6 +34,9 @@ class WifiManager {
   String localIp() const;
   String apSsid() const { return ap_ssid_; }
   uint8_t apClients() const;
+  // mDNS host label, e.g. "splatoon" — users visit
+  // http://splatoon.local instead of typing the IP.
+  String mdnsName() const { return mdns_name_; }
 
   // Forget saved credentials + jump to AP. Used by the captive portal's
   // "reset" button and by the long-press BOOT path.
@@ -44,6 +47,17 @@ class WifiManager {
   // password / SSID missing (credential error), 4 = AP active.
   uint8_t statusCode() const;
   const char* statusMessage() const;
+
+  // mDNS setup. Called once after the radio is up; safe to call from
+  // either STA (announces the IP) or AP (announces the softAP IP) mode.
+  // Returns true if mDNS responder started; false on name conflict or
+  // no mode yet — the caller can fall back to "splatoon-XXXX" via
+  // restartWithUniqueMdnsName().
+  bool startMdns();
+  // On a name collision (e.g. another device on the LAN already claims
+  // "splatoon") restart with a per-device suffix derived from the MAC
+  // tail. Returns the final hostname chosen.
+  String ensureUniqueMdnsName();
 
  private:
   void startStaWithBackoff();
@@ -56,6 +70,7 @@ class WifiManager {
   ConfigStore* config_ = nullptr;
   WifiMode mode_ = WifiMode::kAp;
   String ap_ssid_;
+  String mdns_name_ = "splatoon";
   String last_ip_;
 
   // Backoff state
@@ -65,7 +80,7 @@ class WifiManager {
 
   // Credential-error counter. WL_CONNECT_FAILED or WL_NO_SSID_AVAIL
   // bumps this. Three in a row drops to AP. Other failures (no IP yet,
-  // disconnected mid-session) do NOT bump it.
+  // disconnected mid-session) do NOT bump this.
   uint8_t credential_failures_ = 0;
   static constexpr uint8_t kMaxCredentialFailures = 3;
 };

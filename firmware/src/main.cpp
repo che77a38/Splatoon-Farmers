@@ -469,11 +469,9 @@ void setup() {
   // Open the control serial first so the WiFi banner is visible.
   ATT_CONTROL_SERIAL.begin(kControlBaudRate);
   Serial.println("[boot] setup() enter");
-  // Silence the TinyUSB "SendReport not ready" log spam. The library
-  // logs at ERROR every ~5 ms while no Switch is plugged in, which
-  // buries our own Serial output. We don't need those errors: the
-  // gamepad's working state is observable via the normal status path.
-  esp_log_level_set("USBHID", ESP_LOG_NONE);
+  // Note: the TinyUSB USBHID log spam is silenced inside
+  // WifiManager::begin() (the first thing that runs in the WiFi
+  // path), so the WiFi banner below is actually readable.
   pinMode(kBootPin, INPUT_PULLUP);
   pinMode(kLedPin, OUTPUT);
   digitalWrite(kLedPin, HIGH); // off (active-low LED)
@@ -481,20 +479,14 @@ void setup() {
   USB.begin();
   applyReport(farmers::kNeutralReport);
   Serial.println("[boot] before Config.begin");
-  // Persistent NVS-backed config must open before the WiFi manager can
-  // decide between STA and AP. The macro engine auto-start is delayed
-  // until *after* WiFi initialization so the BOOT window can also detect
-  // the "hold for reset" gesture.
   Config.begin();
   Serial.println("[boot] after Config.begin");
   Wifi.begin(&Config);
-  Serial.printf("[WiFi] mode=%s, status=%s, ip=%s, ap_ssid=%s\n",
+  Serial.printf("[WiFi] mode=%s, status=%s, ip=%s, ap_ssid=%s, mdns=%s.local\n",
                 Wifi.mode() == farmers::WifiMode::kSta       ? "sta" :
                 Wifi.mode() == farmers::WifiMode::kStaConnecting ? "sta-connecting" : "ap",
                 Wifi.statusMessage(), Wifi.localIp().c_str(),
-                Wifi.apSsid().c_str());
-  // Decide at boot whether to auto-start a script based on the BOOT-button
-  // press count. Runs once; subsequent resets behave the same way.
+                Wifi.apSsid().c_str(), Wifi.mdnsName().c_str());
   Serial.println("[boot] before autoStartFromBoot");
   autoStartFromBoot();
   Serial.println("[boot] setup() done");
