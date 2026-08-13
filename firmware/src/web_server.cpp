@@ -113,6 +113,18 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
 
   server_->begin();
   startDns();
+
+  // WebSocket endpoint for the WiFi transport. The handler stays bound
+  // to *this so the per-client sinks we install see the right
+  // `WebServer` instance. The endpoint is registered whether or not
+  // a client connects — the actual handler lives in onWsEvent().
+  ws_.onEvent([this](AsyncWebSocket* server, AsyncWebSocketClient* client,
+                    AwsEventType type, void* arg, uint8_t* data,
+                    size_t len) {
+    onWsEvent(server, client, type, arg, data, len);
+  });
+  server_->addHandler(&ws_);
+  Serial.println("[HTTP] WebSocket /ws registered");
   Serial.println("[HTTP] AsyncWebServer up on :80");
 }
 
@@ -254,6 +266,101 @@ void WebServer::onCaptiveRedirect(AsyncWebServerRequest* req) {
   } else {
     req->send(404, "text/plain", "Not Found");
   }
+}
+
+// --- WebSocket protocol surface ---------------------------------------------
+//
+// We only handle the bare minimum for an end-to-end smoke test here:
+// each text frame is parsed as if it were a raw HID report frame
+// ("R buttons dpad lx ly rx ry"). The full command dispatcher
+// (HELLO, STATUS, START*, STOP, STREAM, SCRIPT) lands in commit 7
+// alongside the browser-side http-transport.js, which knows how to
+// dispatch the full protocol against the existing serial paths.
+
+namespace {
+
+// Clamp a numeric field into the Switch / switch_ESP32 valid range.
+// 0..255 covers all four axes; 0..15 covers dpad (NSGAMEPAD_DPAD_*).
+unsigned long clampU8(unsigned long v) {
+  return v > 255 ? 255 : v;
+}
+unsigned long clampDpad(unsigned long v) {
+  // Reject anything outside the hat-switch range and fall back to
+  // centered, mirroring the firmware's normalizeDpad() behaviour.
+  return (v == 15 || v <= 7) ? v : 15;
+}
+
+}  // namespace
+
+void WebServer::replyTo(AsyncWebSocketClient* client, const char* line) {
+  if (line) client->text(line);
+}
+
+void WebServer::wsRawReport(AsyncWebSocketClient* client, const String& line) {
+  // Parse "<buttons> <dpad> <lx> <ly> <rx> <ry>" into unsigned longs.
+  // sscanf's %lu is permissive about whitespace, which is what we
+  // want here — the serial path uses the same parser.
+  unsigned long buttons = 0;
+  unsigned long dpad = 15;
+  unsigned long lx = 128, ly = 128, rx = 128, ry = 128;
+  // Skip the leading "R " or "REPORT " if the client sent one.
+  // (The browser-side http-transport.js strips it; this is just
+  // defensive.)
+  const char* p = line.c_str();
+  if (line.startsWith("R ") || line.startsWith("REPORT ")) {
+    p = strchr(p, ' ');
+    if (!p) { replyTo(client, "ERR"); return; }
+    p++;
+  }
+  int parsed = sscanf(p, "%lu %lu %lu %lu %lu %lu",
+                      &buttons, &dpad, &lx, &ly, &rx, &ry);
+  if (parsed != 6) { replyTo(client, "ERR"); return; }
+  // Apply — bitmask the buttons to 14 bits just like the serial
+  // path's applyRawReport, then clamp the dpad / axes.
+  const uint16_t bm = static_cast<uint16_t>(buttons & 0x3fff);
+  const uint8_t dp = static_cast<uint8_t>(clampDpad(dpad));
+  const uint8_t x1 = static_cast<uint8_t>(clampU8(lx));
+  const uint8_t y1 = static_cast<uint8_t>(clampU8(ly));
+  const uint8_t x2 = static_cast<uint8_t>(clampU8(rx));
+  const uint8_t y2 = static_cast<uint8_t>(clampU8(ry));
+  // We need the gamepad's NSGamepad. It's owned by main.cpp's
+  // anonymous namespace; we can't link to it directly. Instead the
+  // WebServer reports "OK" without actually applying the report —
+  // the full WebUI -> R -> Switch path is wired in commit 7 once
+  // we have the protocol-forwarder thread-safety story resolved.
+  //
+  // For now we just acknowledge so the wire format is exercised
+  // end-to-end. This is an acknowledged gap; the user gets a real
+  // R frame through the wire once commit 7 lands.
+  replyTo(client, "OK");
+  // Silence unused-variable warnings until commit 7 wires these
+  // into the actual gamepad write.
+  (void)bm; (void)dp; (void)x1; (void)y1; (void)x2; (void)y2;
+}
+
+void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
+                           AwsEventType type, void* arg, uint8_t* data,
+                           size_t len) {
+  (void)server;
+  (void)arg;
+  if (type == WS_EVT_CONNECT) {
+    Serial.printf("[WS] client #%u connected\n", client->id());
+    return;
+  }
+  if (type == WS_EVT_DISCONNECT) {
+    Serial.printf("[WS] client #%u disconnected\n", client->id());
+    return;
+  }
+  if (type != WS_EVT_DATA) return;
+  // Concatenate the chunk into a String. WS frames are usually
+  // single-shot for our payloads (a few hundred bytes max).
+  String line;
+  for (size_t i = 0; i < len; ++i) line += (char)data[i];
+  line.trim();
+  if (line.isEmpty()) return;
+  // For now every command is forwarded to the R-frame handler. The
+  // full command dispatcher is added in commit 7.
+  wsRawReport(client, line);
 }
 
 }  // namespace farmers

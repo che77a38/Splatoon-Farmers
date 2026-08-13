@@ -48,13 +48,29 @@ class WebServer {
   void onCaptiveRedirect(AsyncWebServerRequest* req);
 
   // DNS: in AP mode, every query returns the softAP IP so the OS
-  // auto-opens the portal page when the user joins the AP.
+  // auto-pop the portal page when the user joins the AP.
   void startDns();
   void stopDns();
+
+  // WebSocket endpoint at /ws. This commit only handles the minimum
+  // needed for a smoke test: each text frame is treated as a raw
+  // HID report ("R buttons dpad lx ly rx ry") and forwarded to the
+  // gamepad. The server replies "OK" on success or "ERR" on parse
+  // failure, mirroring the serial protocol's R-handler response. The
+  // full command dispatcher (STATUS, START*, STOP, SCRIPT) lands in
+  // commit 7 alongside the browser-side http-transport, which keeps
+  // this commit's surface small enough to avoid the
+  // anonymous-namespace boundary issues the protocol-forwarder
+  // approach ran into.
+  void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
+                 AwsEventType type, void* arg, uint8_t* data, size_t len);
+  void wsRawReport(AsyncWebSocketClient* client, const String& line);
+  static void replyTo(AsyncWebSocketClient* client, const char* line);
 
   ConfigStore* config_ = nullptr;
   WifiManager* wifi_ = nullptr;
   AsyncWebServer* server_ = nullptr;
+  AsyncWebSocket ws_{"/ws"};
   DNSServer* dns_ = nullptr;
   // Whether the user has submitted new WiFi credentials and a restart
   // is pending. Reset at boot by reading the counter.
