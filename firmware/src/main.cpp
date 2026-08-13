@@ -316,11 +316,102 @@ void readControlSerial() {
 
 }  // namespace
 
+// GPIO0 is the BOOT button on ESP32-S3-DevKitC-1 (active-low, internal
+// pull-up needed). After the application boots we use it as a script
+// selector: pressing it N times within the first kBootSelectWindowMs
+// milliseconds after boot auto-starts the matching embedded script:
+//   1 tap -> 杏棱巢穴 (material-farm, 48 steps)
+//   2 taps -> 天妇罗巢穴 (apricot-den, 35 steps)
+//   3 taps -> 天妇罗回墨 (apricot-den-inkback, 100 steps)
+//   0 taps -> idle, wait for the web UI / serial command
+// GPIO48 is the on-board RGB LED on ESP32-S3-DevKitC-1 (active-low); we
+// blink it during the selection window so the user has a visual cue.
+constexpr uint8_t kBootPin = 0;
+constexpr uint8_t kLedPin = 48;
+constexpr uint32_t kBootSelectWindowMs = 3000;
+constexpr uint32_t kBootDebounceMs = 50;
+
+// Count BOOT-button presses within the selection window. Returns 0..3.
+// The window starts when setup() returns; we use millis() as a monotonic
+// reference (rollover at ~50 days is irrelevant for a 3-second window).
+//
+// Debouncing strategy: wait for the line to go LOW, record the press,
+// then wait for the line to go HIGH before counting another press. Any
+// glitch shorter than kBootDebounceMs is ignored so a flaky contact does
+// not double-count.
+uint32_t readBootPressCount(uint32_t startMs) {
+  uint32_t presses = 0;
+  bool lastState = HIGH;
+  while (millis() - startMs < kBootSelectWindowMs) {
+    const bool state = digitalRead(kBootPin);
+    if (state == LOW && lastState == HIGH) {
+      // falling edge -> press start. Wait out debounce.
+      delay(kBootDebounceMs);
+      if (digitalRead(kBootPin) == LOW) {
+        presses += 1;
+        // Visual feedback: a short inverted blink so the LED pulses off
+        // for ~60 ms each time a press is registered.
+        digitalWrite(kLedPin, LOW);
+        delay(60);
+        digitalWrite(kLedPin, HIGH);
+        // Wait for the user to release before counting another press.
+        while (digitalRead(kBootPin) == LOW) {
+          if (millis() - startMs >= kBootSelectWindowMs) break;
+          delay(5);
+        }
+        delay(kBootDebounceMs);
+        lastState = HIGH;
+        continue;
+      }
+    }
+    lastState = state;
+    delay(5);
+  }
+  return presses;
+}
+
+// Auto-start the embedded script matching the BOOT-button press count. The
+// press counter is consulted exactly once at boot, before the web UI is
+// likely to connect — if the user wants web control they just don't
+// press BOOT, or they can STOP the script at any time via the existing
+// STOP serial command.
+void autoStartFromBoot() {
+  const uint32_t start = millis();
+  // Brief LED-on pulse signals "selection window open". The first 100 ms
+  // is intentionally quiet so the user has time to settle before pressing.
+  digitalWrite(kLedPin, LOW);
+  delay(100);
+  digitalWrite(kLedPin, HIGH);
+
+  const uint32_t presses = readBootPressCount(start);
+  digitalWrite(kLedPin, presses > 0 ? LOW : HIGH);
+  if (presses == 0) return;
+
+  // 1=material, 2=apricot, 3=apricot-inkback
+  if (presses == 1) Active = ActiveScript::kMaterial;
+  else if (presses == 2) Active = ActiveScript::kApricot;
+  else /* presses >= 3 */ Active = ActiveScript::kApricotInkback;
+
+  stopAllMacros();
+  farmers::MacroEngine& macro = activeMacro();
+  macro.start(millis());
+  flushMacroReport();
+  // Hold the LED on while the chosen script runs so the user can tell at
+  // a glance which routine auto-started.
+  digitalWrite(kLedPin, LOW);
+}
+
 void setup() {
+  pinMode(kBootPin, INPUT_PULLUP);
+  pinMode(kLedPin, OUTPUT);
+  digitalWrite(kLedPin, HIGH); // off (active-low LED)
   ATT_CONTROL_SERIAL.begin(kControlBaudRate);
   Gamepad.begin();
   USB.begin();
   applyReport(farmers::kNeutralReport);
+  // Decide at boot whether to auto-start a script based on the BOOT-button
+  // press count. Runs once; subsequent resets behave the same way.
+  autoStartFromBoot();
 }
 
 void loop() {
