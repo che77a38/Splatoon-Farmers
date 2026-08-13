@@ -235,3 +235,60 @@ npm run serve          # 然后浏览器打开 http://localhost:4173
 - 多脚本并存未实现（编辑器一次只编辑一个）
 - 物理手柄录制未实现（Web Gamepad API 不在 v1 范围）
 - 脚本烧录到 firmware 永久存储未实现（接口预留）
+
+## 13. WiFi 模式（板载 Web 服务器）
+
+新增的 `firmware/src/wifi_manager.{h,cpp}` + `web_server.{h,cpp}` + `web/http-transport.js` 让板子开 WiFi STA 模式——浏览器访问 `http://splatoon.local` 直接进 web 控制页，**不再需要电脑**。电脑端 Web Serial 路径**完全保留**（USB 插线仍可用）。
+
+### 模式
+
+- **AP 配网**（无凭证 / 长按 BOOT 5s）：板子开 `SplatoonFarmers-XXXX` WiFi，浏览器自动跳 `http://192.168.4.1/provision` 配网页
+- **STA 联网**（有凭证）：板子连家里 WiFi，mDNS 广播 `splatoon.local`，浏览器访问 `http://splatoon.local`
+- 重连：路由器关 → 永远指数退避重试；密码错 3 次 → 自动回 AP；长按 BOOT 5s → 强制回 AP
+
+### 关键文件
+
+| 文件 | 用途 |
+|---|---|
+| `firmware/src/config_store.{h,cpp}` | NVS 凭证存储 |
+| `firmware/src/wifi_manager.{h,cpp}` | AP/STA 状态机 + mDNS |
+| `firmware/src/web_server.{h,cpp}` | AsyncWebServer + Captive DNS + /api/* + /ws |
+| `firmware/data/provision.html` | 极简配网页（SSID 下拉 + 密码框 + 保存） |
+| `web/http-transport.js` | 浏览器 WebSocket 客户端（与 SerialTransport 同接口） |
+| `web/app.js` TransportClass 选择 | `?transport=ws`/`?transport=serial` + 默认优先 Serial |
+| `web/app.js` UI | "已通过 WiFi (splatoon.local) 连接" / "已连接 · 待命" |
+
+### 烧录流程
+
+```bash
+# 一次性：复制 web/ 到 firmware/data/（每次 web/ 改动都重做）
+cp -r web/* firmware/data/
+
+# 烧 firmware + data partition
+pio run -t upload
+pio run -t uploadfs
+```
+
+### 使用流程
+
+1. 首次烧录后板子进 AP 模式（无 NVS 凭证）
+2. 手机/电脑连 `SplatoonFarmers-XXXX` → 浏览器自动跳配网页
+3. 选 WiFi + 输入密码 + 保存 → 板子 2 秒后重启
+4. 重启后进 STA 模式，串口打印 `[HTTP] Web UI: http://splatoon.local`
+5. 同一 WiFi 的设备浏览器访问 `splatoon.local` → 看到完整 web 控制页
+6. 想重置 WiFi：长按 BOOT 5s（板载 LED 4Hz 闪烁提示）→ 清凭证 → 回 AP
+
+### URL 参数
+
+- `?transport=ws` — 强制走 WebSocket
+- `?transport=serial` — 强制走 Web Serial
+- `?host=192.168.1.42` — 自定义 WebSocket 主机（mDNS 失效时）
+- `?mock=1` — 用 mock transport（开发用）
+- 默认：浏览器有 Web Serial → 走 Serial；没有 → 走 WebSocket
+
+### v1 已知限制
+
+- 协议层目前 `/ws` 只处理 R 帧 + OK/ERR（commit 6）。完整 dispatcher（HELLO / STATUS / START* / STOP / SCRIPT）通过现有串口命令字节级兼容，浏览器侧通过 `HttpTransport.send("STATUS\n")` 直接转发——WebUI 端 STATUS / 切换脚本 / R 帧全部工作
+- 端到端 R 帧 + Gamepad.write() 接通在 commit 6 标记为已知 gap（web_server.cpp 内的 wsRawReport 只回 OK 不实际调 Gamepad）——commit 8 之后 commit 9+ 期间会补
+- HTTPS / 自签证书：v1 全部 HTTP+WS；`secure: true` 选项已留在 HttpTransport ctor 里
+- 单客户端 WS：AsyncWebServer 支持多并发但未测
