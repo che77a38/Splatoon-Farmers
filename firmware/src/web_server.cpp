@@ -43,11 +43,32 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
 
   server_ = new AsyncWebServer(80);
 
+  // Static files first: serveStatic handles every path under "/" by
+  // looking up the matching file in LittleFS. We register this BEFORE
+  // the onNotFound fallback below so that the captive redirect
+  // only fires for genuinely-missing paths (and not for /styles.css,
+  // /app.js, /editor.js, etc., which a browser automatically fetches
+  // after loading index.html).
+
   // Captive-portal DNS: in AP mode, every DNS query returns the softAP
   // IP so the OS auto-opens the portal page when the user joins the
   // AP. We start the DNS server only in AP mode; in STA mode the
   // mDNSResponder already answers the queries we need.
+  //
+  // The onNotFound handler runs only for paths serveStatic (registered
+  // below) did not match. We skip the captive redirect for paths that
+  // look like sub-resource fetches (e.g. "/styles.css") because the
+  // browser issues those as a side-effect of loading /, and we want
+  // them to 404 cleanly rather than bounce the user into /provision
+  // mid-load.
   server_->onNotFound([this](AsyncWebServerRequest* req) {
+    const String& url = req->url();
+    if (url.endsWith(".css") || url.endsWith(".js") ||
+        url.endsWith(".png") || url.endsWith(".svg") ||
+        url.endsWith(".ico") || url.endsWith(".map")) {
+      req->send(404, "text/plain", "Not Found");
+      return;
+    }
     onCaptiveRedirect(req);
   });
 
