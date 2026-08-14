@@ -544,12 +544,14 @@ BootSelection readBootPressCount(uint32_t startMs) {
 // STOP serial command.
 void autoStartFromBoot() {
   const uint32_t start = millis();
-  // Brief LED-on pulse signals "selection window open". The first 100 ms
-  // is intentionally quiet so the user has time to settle before pressing.
+  // LED-on signals the 3-second selection window. The LED stays lit
+  // the whole time so the user has a clear "you can press now"
+  // indicator. readBootPressCount turns the LED off when it
+  // detects the first falling edge (so the user sees their press
+  // acknowledged). If the LED is still on when readBootPressCount
+  // returns, no taps were registered and we move into the long-press
+  // window.
   digitalWrite(kLedPin, LOW);
-  delay(100);
-  digitalWrite(kLedPin, HIGH);
-
   // Step 1: 3-second script-selector window. Counts short taps.
   const BootSelection sel = readBootPressCount(start);
   digitalWrite(kLedPin, sel.presses > 0 ? LOW : HIGH);
