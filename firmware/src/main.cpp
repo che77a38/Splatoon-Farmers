@@ -342,10 +342,16 @@ void readControlSerial() {
 // than the tap counter debounce — we wipe the saved WiFi credentials
 // and bounce the device back to AP provisioning mode. LED blinks while
 // the hold timer is in flight so the user can see what's happening.
-// GPIO48 is the on-board RGB LED on ESP32-S3-DevKitC-1 (active-low); we
-// blink it during the selection / reset windows so the user has a visual
-// cue.
-constexpr uint8_t kBootPin = 0;
+//
+// kBootPin is configurable via -DBOOT_BUTTON_GPIO=<N> at build time
+// so a board that wires the button to a different pin (e.g. some
+// N16R8 board variants route BOOT to GPIO35 or GPIO3) can override
+// the default without editing source.
+#ifndef BOOT_BUTTON_GPIO
+constexpr uint8_t kBootPin = 0;  // GPIO0 on standard DevKitC-1
+#else
+constexpr uint8_t kBootPin = BOOT_BUTTON_GPIO;
+#endif
 constexpr uint8_t kLedPin = 48;
 constexpr uint32_t kBootSelectWindowMs = 3000;
 constexpr uint32_t kBootResetWindowMs = 5000;
