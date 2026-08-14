@@ -197,6 +197,7 @@ void stopAllMacros() {
 }
 
 void handleLine(char* line) {
+  Serial.printf("[USER] cmd: %s\n", line);
   if (strcmp(line, "PING") == 0) {
     ATT_CONTROL_SERIAL.println("PONG");
     return;
@@ -431,10 +432,15 @@ void autoStartFromBoot() {
   // Step 1: 3-second script-selector window. Counts short taps.
   const uint32_t presses = readBootPressCount(start);
   digitalWrite(kLedPin, presses > 0 ? LOW : HIGH);
+  Serial.printf("[BOOT] selector window closed, presses=%u\n", presses);
   if (presses == 0) {
     // Step 2: detect a long-press for WiFi reset. We restart the LED
     // pattern so the user can see the hold timer ticking.
-    if (waitForBootLongPress(start, kBootResetWindowMs)) {
+    Serial.printf("[BOOT] entering long-press window (hold BOOT %u ms)\n",
+                  kBootResetWindowMs);
+    const bool reset = waitForBootLongPress(start, kBootResetWindowMs);
+    Serial.printf("[BOOT] long-press result=%d\n", reset);
+    if (reset) {
       Serial.println("[BOOT] long-press detected -> clearing WiFi credentials");
       Wifi.resetCredentials();
       // LED stays on (now AP) so the user knows the device is ready to
@@ -464,6 +470,8 @@ void autoStartFromBoot() {
 // tick. We abort early as soon as the user releases so accidental
 // presses do not trigger a reset.
 bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
+  Serial.printf("[BOOT] long-press detector waiting for BOOT LOW (deadline %u ms from start)\n",
+                kBootSelectWindowMs + kBootResetWindowMs);
   // The short-press window consumed 3 s; the long-press window is an
   // ADDITIONAL 5 s. The combined deadline is therefore 3 s + 5 s
   // = kBootSelectWindowMs + kBootResetWindowMs. We wait for BOOT
@@ -474,20 +482,28 @@ bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
   // false without clearing credentials.
   const uint32_t deadlineMs = kBootSelectWindowMs + kBootResetWindowMs;
   while (digitalRead(kBootPin) == HIGH) {
-    if (millis() - startMs > kBootSelectWindowMs) return false;
+    if (millis() - startMs > kBootSelectWindowMs) {
+      Serial.println("[BOOT] long-press: BOOT never went LOW in window");
+      return false;
+    }
     delay(5);
   }
+  Serial.println("[BOOT] long-press: BOOT went LOW, starting 5s timer");
   // BOOT is now down. Start the long-press timer.
   const uint32_t pressStart = millis();
   uint32_t nextBlink = pressStart;
   while (digitalRead(kBootPin) == LOW) {
     if (millis() - startMs > deadlineMs) {
       // Combined window expired before reaching thresholdMs.
+      Serial.printf("[BOOT] long-press: window expired, held=%u ms, need=%u ms\n",
+                    (unsigned)(millis() - pressStart), thresholdMs);
       return false;
     }
     const uint32_t held = millis() - pressStart;
     if (held >= thresholdMs) {
       // Reset triggered. Run a couple of fast blinks to confirm.
+      Serial.printf("[BOOT] long-press: threshold reached, held=%u ms\n",
+                    (unsigned)held);
       for (int i = 0; i < 3; ++i) {
         digitalWrite(kLedPin, LOW);
         delay(60);
@@ -502,6 +518,7 @@ bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
     }
     delay(5);
   }
+  Serial.println("[BOOT] long-press: BOOT released before threshold");
   return false;  // released before threshold
 }
 
