@@ -367,16 +367,40 @@ uint32_t readBootPressCount(uint32_t startMs) {
       // falling edge -> press start. Wait out debounce.
       delay(kBootDebounceMs);
       if (digitalRead(kBootPin) == LOW) {
-        presses += 1;
-        // Visual feedback: a short inverted blink so the LED pulses off
-        // for ~60 ms each time a press is registered.
+        // Hold the LED off for the first ~60 ms so a short tap
+        // produces a single visible blink, matching the documented UX.
         digitalWrite(kLedPin, LOW);
         delay(60);
         digitalWrite(kLedPin, HIGH);
-        // Wait for the user to release before counting another press.
+        // Wait for the user to release. We track how long the press
+        // lasted so we can distinguish a tap (released quickly) from
+        // a long-hold (still pressed at the end of the 3 s window).
+        // A tap counts; a long-hold does NOT — the long-hold is the
+        // WiFi-reset gesture and we want the next autoStartFromBoot
+        // branch to handle it, not the script selector.
+        const uint32_t pressStartMs = millis();
         while (digitalRead(kBootPin) == LOW) {
-          if (millis() - startMs >= kBootSelectWindowMs) break;
+          if (millis() - startMs >= kBootSelectWindowMs) {
+            // Window expired with BOOT still held. Treat as
+            // long-press; do not count it as a script tap.
+            presses = 0;
+            // Drain the remaining delay so the next outer-while
+            // iteration sees a stable HIGH. Without this we would
+            // re-enter the LOW branch on the next poll.
+            while (digitalRead(kBootPin) == LOW) delay(5);
+            return presses;
+          }
           delay(5);
+        }
+        if (millis() - pressStartMs >= 1000) {
+          // Held for over a second but released before the window
+          // expired. Ambiguous between "long tap" and "short hold";
+          // we still treat it as a count because the user clearly
+          // intended to do *something* and the WiFi-reset path
+          // only triggers on >= 5 s. Skip the per-press blink so we
+          // don't pretend it was a deliberate tap.
+        } else {
+          presses += 1;
         }
         delay(kBootDebounceMs);
         lastState = HIGH;
@@ -438,16 +462,27 @@ void autoStartFromBoot() {
 // tick. We abort early as soon as the user releases so accidental
 // presses do not trigger a reset.
 bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
-  // First, wait until BOOT is actually down (otherwise the user is
-  // not pressing at all).
+  // The short-press window consumed 3 s; the long-press window is an
+  // ADDITIONAL 5 s. The combined deadline is therefore 3 s + 5 s
+  // = kBootSelectWindowMs + kBootResetWindowMs. We wait for BOOT
+  // to actually go LOW (so accidental finger-on-BOOT during boot
+  // doesn't immediately count as a long-press), then start the
+  // 5 s timer from the moment BOOT first reads LOW. If the user
+  // never presses BOOT inside the combined window, we return
+  // false without clearing credentials.
+  const uint32_t deadlineMs = kBootSelectWindowMs + kBootResetWindowMs;
   while (digitalRead(kBootPin) == HIGH) {
     if (millis() - startMs > kBootSelectWindowMs) return false;
     delay(5);
   }
-  // Now measure the duration of the continuous press.
+  // BOOT is now down. Start the long-press timer.
   const uint32_t pressStart = millis();
   uint32_t nextBlink = pressStart;
   while (digitalRead(kBootPin) == LOW) {
+    if (millis() - startMs > deadlineMs) {
+      // Combined window expired before reaching thresholdMs.
+      return false;
+    }
     const uint32_t held = millis() - pressStart;
     if (held >= thresholdMs) {
       // Reset triggered. Run a couple of fast blinks to confirm.
