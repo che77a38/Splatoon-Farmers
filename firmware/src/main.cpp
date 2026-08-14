@@ -623,7 +623,11 @@ void setup() {
                 Wifi.statusMessage(), Wifi.localIp().c_str(),
                 Wifi.apSsid().c_str(), Wifi.mdnsName().c_str());
   Serial.println("[boot] before autoStartFromBoot");
-  autoStartFromBoot();
+  // TEMPORARY: disabled for diagnostic. The user's new board has BOOT
+  // on a different pin and the default GPIO0 waitForBootHold blocks
+  // forever. Re-enable once -DBOOT_BUTTON_GPIO=<pin> is set.
+  // autoStartFromBoot();
+  Serial.println("[boot] autoStartFromBoot SKIPPED (BOOT pin unknown)");
   Serial.println("[boot] setup() done");
 }
 
