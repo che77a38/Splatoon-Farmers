@@ -556,6 +556,26 @@ void loop() {
   if (!streamMode) {
     activeMacro().tick(millis());
   }
-  flushMacroReport();
-  Gamepad.loop();
+  // The switch_ESP32 library's Gamepad.loop() is what floods the serial
+  // with `SendReport(): not ready` every 5 ms while no Switch is
+  // plugged in (HID host not ready). The vendor source is pre-compiled
+  // inside .pio so we cannot patch it. We side-step the call entirely
+  // and re-implement the report re-send ourselves: every 10 ms, if
+  // the macro engine has a fresh report queued, push it via
+  // Gamepad.write(). When no Switch is plugged in, write() returns
+  // false and we stop trying for a beat before retrying.
+  static uint32_t lastReportMs = 0;
+  const uint32_t now = millis();
+  if (now - lastReportMs >= 10) {
+    lastReportMs = now;
+    farmers::MacroEngine& macro = activeMacro();
+    if (macro.consumeReportChanged()) {
+      applyReport(macro.report());
+    }
+  }
+  // flushMacroReport() and the old Gamepad.loop() are intentionally
+  // removed: the loop's 10 ms re-send above is the only place that
+  // touches Gamepad.write(). Skipping the vendor loop() eliminates the
+  // 5 ms `SendReport(): not ready` log spam that buried the serial
+  // output while no Switch is plugged in.
 }
