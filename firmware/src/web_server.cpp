@@ -25,6 +25,19 @@ String makeBar(int rssi) {
   return s;
 }
 
+// Pick a content-type from the file extension. The web/ assets are
+// served with the right type so the browser does not have to sniff.
+const char* getMimeType(const char* name) {
+  if (strstr(name, ".html")) return "text/html; charset=utf-8";
+  if (strstr(name, ".css"))  return "text/css; charset=utf-8";
+  if (strstr(name, ".js"))   return "application/javascript; charset=utf-8";
+  if (strstr(name, ".json")) return "application/json; charset=utf-8";
+  if (strstr(name, ".svg"))  return "image/svg+xml";
+  if (strstr(name, ".png"))  return "image/png";
+  if (strstr(name, ".ico"))  return "image/x-icon";
+  return "application/octet-stream";
+}
+
 }  // namespace
 
 WebServer::WebServer() = default;
@@ -43,17 +56,41 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
 
   server_ = new AsyncWebServer(80);
 
-  // Static files first: serveStatic handles every path under "/" by
-  // looking up the matching file in LittleFS. We register this BEFORE
-  // the onNotFound fallback below so that the captive redirect
-  // only fires for genuinely-missing paths (and not for /styles.css,
-  // /app.js, /editor.js, etc., which a browser automatically fetches
-  // after loading index.html). The explicit on() routes registered
-  // later (e.g. /api/scan) take priority over this prefix matcher
-  // because AsyncWebServer's internal routing order is "more specific
-  // wins".
-  server_->serveStatic("/", LittleFS, "/")
-      .setDefaultFile("index.html");
+  // Static files. We register each known asset individually rather
+  // than calling serveStatic("/", ...) which would prefix-match
+  // /api/* and swallow those requests before the explicit on()
+  // routes registered below got a chance. Listing the assets we
+  // ship in data/ keeps the explicit-route handlers authoritative
+  // for everything else. The setDefaultFile-style "/" -> index.html
+  // behaviour lives in the explicit on("/") route below.
+  static const char* kStaticFiles[] = {
+      "index.html",
+      "styles.css",
+      "app.js",
+      "editor.js",
+      "manual-input.js",
+      "protocol.js",
+      "serial-transport.js",
+      "provision.html",
+  };
+  for (const char* name : kStaticFiles) {
+    char path[32];
+    snprintf(path, sizeof(path), "/%s", name);
+    server_->on(path, HTTP_GET,
+                [this, name](AsyncWebServerRequest* req) {
+                  char fullPath[32];
+                  snprintf(fullPath, sizeof(fullPath), "/%s", name);
+                  if (LittleFS.exists(fullPath)) {
+                    req->send(LittleFS, fullPath, getMimeType(name));
+                  } else {
+                    req->send(404, "text/plain", "Not Found");
+                  }
+                },
+                [](AsyncWebServerRequest* req, const String& fn, size_t i,
+                   uint8_t* d, size_t l, bool f) {},
+                [](AsyncWebServerRequest* req, uint8_t* d, size_t l,
+                   size_t i, size_t t) {});
+  }
 
   // Captive-portal DNS: in AP mode, every DNS query returns the softAP
   // IP so the OS auto-opens the portal page when the user joins the
@@ -125,15 +162,16 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
     onRoot(req);
   });
 
-  // Root path: in AP mode redirect to /provision, in STA mode the
-  // static index.html (added in commit 5) will serve itself.
+  // Root path: serve index.html as the default document. The per-asset
+  // on() routes above handle subresources like /styles.css and /app.js.
   server_->on("/", HTTP_GET, [this](AsyncWebServerRequest* req) {
-    if (wifi_->mode() == WifiMode::kAp) {
-      req->redirect("/provision");
-    } else if (LittleFS.exists("/index.html")) {
+    if (LittleFS.exists("/index.html")) {
       req->send(LittleFS, "/index.html", "text/html");
-    } else {
+    } else if (wifi_->mode() == WifiMode::kAp) {
       req->redirect("/provision");
+    } else {
+      req->send(200, "text/plain",
+                "SplatoonFarmers. Upload data/index.html to flash.");
     }
   });
 
