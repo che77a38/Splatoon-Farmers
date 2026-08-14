@@ -456,7 +456,7 @@ bool waitForBootHold(uint32_t thresholdMs, uint32_t startMs = 0) {
     // Wait for a fresh falling edge. No outer deadline — we want
     // to give the user the full press duration to reach the
     // threshold.
-    lowStartMs = waitForBootPress(UINT32_MAX);
+    lowStartMs = waitForBootPress(startMs + kBootSelectWindowMs + kBootResetThresholdMs);
     if (lowStartMs == 0) return false;
     Serial.printf("[BOOT] long-press: fresh press at %u ms\n",
                   (unsigned)lowStartMs);
@@ -623,11 +623,7 @@ void setup() {
                 Wifi.statusMessage(), Wifi.localIp().c_str(),
                 Wifi.apSsid().c_str(), Wifi.mdnsName().c_str());
   Serial.println("[boot] before autoStartFromBoot");
-  // TEMPORARY: disabled for diagnostic. The user's new board has BOOT
-  // on a different pin and the default GPIO0 waitForBootHold blocks
-  // forever. Re-enable once -DBOOT_BUTTON_GPIO=<pin> is set.
-  // autoStartFromBoot();
-  Serial.println("[boot] autoStartFromBoot SKIPPED (BOOT pin unknown)");
+  autoStartFromBoot();
   Serial.println("[boot] setup() done");
 }
 
