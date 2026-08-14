@@ -524,8 +524,8 @@ void autoStartFromBoot() {
     // Step 2: 5-second long-press to clear WiFi credentials. The
     // window is open-ended — a press of any length reaches the
     // threshold after 5 s of cumulative low time. Hold durations of
-    // 5 s, 10 s, 20 s all trigger the reset; the only thing the
-    // user has to time is "at least 5 s".
+    // 5 s, 10 s, 20 s all trigger the reset (idempotent); the only
+    // thing the user has to time is "at least 5 s".
     Serial.printf("[BOOT] entering long-press threshold=%u ms\n",
                   (unsigned)kBootResetThresholdMs);
     if (waitForBootHold(kBootResetThresholdMs)) {
