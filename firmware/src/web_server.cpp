@@ -51,7 +51,7 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
   // the API routes still work, and the AP-mode provision page lives
   // here so the captive portal can render it.
   if (!LittleFS.begin(true /* formatOnFail */)) {
-    Serial.println("[HTTP] LittleFS mount failed");
+    Serial.println("[HTTP] LittleFS 挂载失败");
   }
 
   server_ = new AsyncWebServer(80);
@@ -188,15 +188,15 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
     onWsEvent(server, client, type, arg, data, len);
   });
   server_->addHandler(&ws_);
-  Serial.println("[HTTP] WebSocket /ws registered");
-  Serial.println("[HTTP] AsyncWebServer up on :80");
+  Serial.println("[HTTP] WebSocket /ws 路由注册");
+  Serial.println("[HTTP] 异步 Web 服务器启动 端口 :80");
 }
 
 void WebServer::tick() {
   if (dns_) dns_->processNextRequest();
 
   if (restart_pending_ && millis() >= restart_at_ms_) {
-    Serial.println("[HTTP] scheduled restart firing");
+    Serial.println("[HTTP] 计划重启触发");
     ESP.restart();
   }
 }
@@ -207,7 +207,7 @@ void WebServer::startDns() {
   dns_ = new DNSServer();
   // Answer every query with the softAP IP. 53 is the standard DNS port.
   dns_->start(53, "*", wifi_->softApIp());
-  Serial.println("[HTTP] captive DNS up: 53 -> " +
+  Serial.println("[HTTP] 强制门户 DNS 启动: 53 -> " +
                 wifi_->softApIp().toString());
 }
 
@@ -297,7 +297,7 @@ void WebServer::onSetWifi(AsyncWebServerRequest* req, uint8_t* data, size_t len,
   }
   if (ssid.isEmpty()) {
     req->send(400, "application/json",
-              "{\"ok\":false,\"error\":\"ssid required\"}");
+              "{\"ok\":false,\"error\":\"缺少 SSID 参数\"}");
     return;
   }
   config_->setWifiCredentials(ssid, pass);

@@ -197,7 +197,7 @@ void stopAllMacros() {
 }
 
 void handleLine(char* line) {
-  Serial.printf("[USER] cmd: %s\n", line);
+  Serial.printf("[用户] 命令: %s\n", line);
   if (strcmp(line, "PING") == 0) {
     ATT_CONTROL_SERIAL.println("PONG");
     return;
@@ -450,7 +450,7 @@ bool waitForBootHold(uint32_t thresholdMs, uint32_t startMs = 0) {
   uint32_t lowStartMs = 0;
   if (startMs != 0) {
     lowStartMs = startMs;
-    Serial.printf("[BOOT] long-press: reusing press-start at %u ms\n",
+    Serial.printf("[BOOT] 长按检测：复用按下起点= %u ms\n",
                   (unsigned)startMs);
   } else {
     // Wait for a fresh falling edge. No outer deadline — we want
@@ -458,7 +458,7 @@ bool waitForBootHold(uint32_t thresholdMs, uint32_t startMs = 0) {
     // threshold.
     lowStartMs = waitForBootPress(startMs + kBootSelectWindowMs + kBootResetThresholdMs);
     if (lowStartMs == 0) return false;
-    Serial.printf("[BOOT] long-press: fresh press at %u ms\n",
+    Serial.printf("[BOOT] 长按检测：本次按下时刻= %u ms\n",
                   (unsigned)lowStartMs);
   }
   // Sample BOOT every 5 ms; transient HIGHs shorter than
@@ -471,7 +471,7 @@ bool waitForBootHold(uint32_t thresholdMs, uint32_t startMs = 0) {
     if (digitalRead(kBootPin) == LOW) {
       lastHighMs = 0;
       if (now - lowStartMs >= thresholdMs) {
-        Serial.printf("[BOOT] long-press reached at low-time=%u ms (threshold %u)\n",
+        Serial.printf("[BOOT] 长按达到阈值，累计低电平=%u ms (threshold %u)\n",
                       (unsigned)(now - lowStartMs), thresholdMs);
         for (int i = 0; i < 3; ++i) {
           digitalWrite(kLedPin, LOW);
@@ -484,7 +484,7 @@ bool waitForBootHold(uint32_t thresholdMs, uint32_t startMs = 0) {
     } else {
       if (lastHighMs == 0) lastHighMs = now;
       if (now - lastHighMs >= kBootDebounceMs) {
-        Serial.printf("[BOOT] released at low-time=%u ms (needed %u)\n",
+        Serial.printf("[BOOT] BOOT 已松开，累计低电平=%u ms (needed %u)\n",
                       (unsigned)(lastHighMs - lowStartMs), thresholdMs);
         return false;
       }
@@ -555,7 +555,7 @@ void autoStartFromBoot() {
   // Step 1: 3-second script-selector window. Counts short taps.
   const BootSelection sel = readBootPressCount(start);
   digitalWrite(kLedPin, sel.presses > 0 ? LOW : HIGH);
-  Serial.printf("[BOOT] selector window closed, presses=%u, longHold=%d\n",
+  Serial.printf("[BOOT] 选择窗口结束，按下次数=%u, longHold=%d\n",
                 (unsigned)sel.presses, (int)sel.longHold);
   if (sel.presses > 0 && !sel.longHold) {
     // Real taps detected — pick the script.
@@ -574,10 +574,10 @@ void autoStartFromBoot() {
   // We pass sel.pressStartMs to waitForBootHold so the threshold
   // counter is anchored to the moment BOOT first went LOW, not to
   // the moment this function runs (which is milliseconds later).
-  Serial.printf("[BOOT] entering long-press threshold=%u ms (anchor=%u)\n",
+  Serial.printf("[BOOT] 进入长按检测，阈值=%u ms (anchor=%u)\n",
                 (unsigned)kBootResetThresholdMs, (unsigned)sel.pressStartMs);
   if (waitForBootHold(kBootResetThresholdMs, sel.pressStartMs)) {
-    Serial.println("[BOOT] long-press detected -> clearing WiFi credentials");
+    Serial.println("[BOOT] 长按达成：正在清除 WiFi 凭证");
     Wifi.resetCredentials();
     digitalWrite(kLedPin, LOW);
   }
@@ -602,7 +602,7 @@ void setup() {
   // component; arduino-esp32 2.0.17 does not pull in the master
   // log-level setter but per-tag works once the SDK is initialised.
   esp_log_level_set("USBHID", ESP_LOG_NONE);
-  Serial.println("[boot] setup() enter");
+  Serial.println("[boot] 设置函数进入");
   // Note: the TinyUSB USBHID log spam is silenced inside
   // WifiManager::begin() (the first thing that runs in the WiFi
   // path), so the WiFi banner below is actually readable.
@@ -612,9 +612,9 @@ void setup() {
   Gamepad.begin();
   USB.begin();
   applyReport(farmers::kNeutralReport);
-  Serial.println("[boot] before Config.begin");
+  Serial.println("[boot] 准备初始化配置存储");
   Config.begin();
-  Serial.println("[boot] after Config.begin");
+  Serial.println("[boot] 配置存储就绪");
   Wifi.begin(&Config);
   Http.begin(&Config, &Wifi);
   Serial.printf("[WiFi] mode=%s, status=%s, ip=%s, ap_ssid=%s, mdns=%s.local\n",
@@ -622,9 +622,9 @@ void setup() {
                 Wifi.mode() == farmers::WifiMode::kStaConnecting ? "sta-connecting" : "ap",
                 Wifi.statusMessage(), Wifi.localIp().c_str(),
                 Wifi.apSsid().c_str(), Wifi.mdnsName().c_str());
-  Serial.println("[boot] before autoStartFromBoot");
+  Serial.println("[boot] 准备自检 BOOT 按钮");
   autoStartFromBoot();
-  Serial.println("[boot] setup() done");
+  Serial.println("[boot] 设置函数完成");
 }
 
 void loop() {

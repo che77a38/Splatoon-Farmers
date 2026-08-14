@@ -86,7 +86,7 @@ void WifiManager::startAp() {
   // portal authenticates the device by being on the same network; the
   // threat model is a friendly household, not a coffee shop.
   WiFi.softAP(ap_ssid_.c_str());
-  Serial.printf("[WiFi] AP up: SSID=%s, IP=%s\n",
+  Serial.printf("[WiFi] AP 启动: SSID=%s, IP=%s\n",
                 ap_ssid_.c_str(),
                 WiFi.softAPIP().toString().c_str());
   // Announce over mDNS so users can type http://splatoon.local to reach
@@ -115,7 +115,7 @@ void WifiManager::tick() {
     sta_attempt_ += 1;
     const uint32_t wait = backoffMs(sta_attempt_);
     next_sta_try_ms_ = millis() + wait;
-    Serial.printf("[WiFi] reconnect attempt #%u in %u ms\n", sta_attempt_,
+    Serial.printf("[WiFi] 重连尝试 #%u in %u ms\n", sta_attempt_,
                   wait);
     WiFi.reconnect();
   }
@@ -126,7 +126,7 @@ void WifiManager::onStaGotIp() {
   credential_failures_ = 0;
   sta_attempt_ = 0;
   last_ip_ = WiFi.localIP().toString();
-  Serial.printf("[WiFi] connected: SSID=%s, IP=%s\n",
+  Serial.printf("[WiFi] 已连接: SSID=%s, IP=%s\n",
                 WiFi.SSID().c_str(), last_ip_.c_str());
   // Bring up mDNS as soon as the IP is real so the user can hit
   // http://splatoon.local right away. If the name is already taken
@@ -141,10 +141,10 @@ void WifiManager::onStaDisconnected(wl_status_t status) {
   // bookkeeping to the next tick to keep the ISR-free path short.
   if (isCredentialError(status)) {
     credential_failures_ += 1;
-    Serial.printf("[WiFi] credential error #%u (status=%d)\n",
+    Serial.printf("[WiFi] 凭证错误 #%u (status=%d)\n",
                   credential_failures_, (int)status);
     if (credential_failures_ >= kMaxCredentialFailures) {
-      Serial.println("[WiFi] 3 credential failures -> dropping to AP mode");
+      Serial.println("[WiFi] 3 次凭证错误 → 切换到 AP 模式");
       config_->clearWifiCredentials();
       startAp();
       return;
@@ -194,7 +194,7 @@ bool WifiManager::startMdns() {
     return false;
   }
   MDNS.addService("http", "tcp", 80);
-  Serial.printf("[mDNS] responder up: %s.local -> %s\n", name.c_str(),
+  Serial.printf("[mDNS] 响应器启动: %s.local -> %s\n", name.c_str(),
                 last_ip_.c_str());
   return true;
 }
@@ -217,7 +217,7 @@ String WifiManager::ensureUniqueMdnsName() {
     MDNS.begin(mdns_name_.c_str());
   }
   MDNS.addService("http", "tcp", 80);
-  Serial.printf("[mDNS] responder up: %s.local -> %s\n", mdns_name_.c_str(),
+  Serial.printf("[mDNS] 响应器启动: %s.local -> %s\n", mdns_name_.c_str(),
                 last_ip_.c_str());
   return mdns_name_;
 }
