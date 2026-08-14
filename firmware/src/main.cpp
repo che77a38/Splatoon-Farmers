@@ -366,10 +366,8 @@ constexpr uint32_t kBootResetWindowMs = 7000;
 // total wait; kBootResetThresholdMs is what counts as a "long
 // press" once detected. 3 s is forgiving without making accidental
 // resets likely.
-constexpr uint32_t kBootResetThresholdMs = 3000;
+constexpr uint32_t kBootResetThresholdMs = 5000;
 constexpr uint32_t kBootDebounceMs = 50;
-
-bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs);
 
 // Count BOOT-button presses within the selection window. Returns 0..3.
 // The window starts when setup() returns; we use millis() as a monotonic
@@ -377,62 +375,133 @@ bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs);
 //
 // Debouncing strategy: wait for the line to go LOW, record the press,
 // then wait for the line to go HIGH before counting another press. Any
-// glitch shorter than kBootDebounceMs is ignored so a flaky contact does
-// not double-count.
-uint32_t readBootPressCount(uint32_t startMs) {
-  uint32_t presses = 0;
-  bool lastState = HIGH;
-  while (millis() - startMs < kBootSelectWindowMs) {
-    const bool state = digitalRead(kBootPin);
-    if (state == LOW && lastState == HIGH) {
-      // falling edge -> press start. Wait out debounce.
+// Shared BOOT-button helpers. These exist so readBootPressCount and
+// waitForBootLongPress can share the debounce + edge-detection logic
+// instead of each re-implementing the same poll loop (DRY).
+namespace {
+
+// Wait for BOOT to transition from HIGH to LOW (a fresh falling
+// edge). Returns the millis() at the moment the debounced falling
+// edge was observed. The function returns 0 if the deadline
+// elapses before any falling edge. We require a sustained LOW
+// read for kBootDebounceMs so a contact bounce does not register
+// as a press.
+uint32_t waitForBootPress(uint32_t deadlineMs) {
+  const uint32_t start = millis();
+  bool prev = HIGH;
+  while (millis() < deadlineMs) {
+    if (digitalRead(kBootPin) == LOW && prev == HIGH) {
       delay(kBootDebounceMs);
       if (digitalRead(kBootPin) == LOW) {
-        // Hold the LED off for the first ~60 ms so a short tap
-        // produces a single visible blink, matching the documented UX.
-        digitalWrite(kLedPin, LOW);
-        delay(60);
-        digitalWrite(kLedPin, HIGH);
-        // Wait for the user to release. We track how long the press
-        // lasted so we can distinguish a tap (released quickly) from
-        // a long-hold (still pressed at the end of the 3 s window).
-        // A tap counts; a long-hold does NOT — the long-hold is the
-        // WiFi-reset gesture and we want the next autoStartFromBoot
-        // branch to handle it, not the script selector.
-        const uint32_t pressStartMs = millis();
-        while (digitalRead(kBootPin) == LOW) {
-          if (millis() - startMs >= kBootSelectWindowMs) {
-            // Window expired with BOOT still held. Treat as
-            // long-press; do not count it as a script tap.
-            presses = 0;
-            // Drain the remaining delay so the next outer-while
-            // iteration sees a stable HIGH. Without this we would
-            // re-enter the LOW branch on the next poll.
-            while (digitalRead(kBootPin) == LOW) delay(5);
-            return presses;
-          }
-          delay(5);
-        }
-        if (millis() - pressStartMs >= 1000) {
-          // Held for over a second but released before the window
-          // expired. Ambiguous between "long tap" and "short hold";
-          // we still treat it as a count because the user clearly
-          // intended to do *something* and the WiFi-reset path
-          // only triggers on >= 5 s. Skip the per-press blink so we
-          // don't pretend it was a deliberate tap.
-        } else {
-          presses += 1;
-        }
-        delay(kBootDebounceMs);
-        lastState = HIGH;
-        continue;
+        return millis();
       }
     }
-    lastState = state;
+    prev = digitalRead(kBootPin);
     delay(5);
+  }
+  return 0;
+}
+
+// Wait for BOOT to return to HIGH (release) after a press started at
+// pressStartMs. Returns the millis() at the moment the line settled
+// HIGH for at least kBootDebounceMs. If the line never goes HIGH
+// (i.e. the user is still holding the button), returns 0.
+uint32_t waitForBootRelease(uint32_t pressStartMs) {
+  uint32_t lastHighMs = 0;
+  while (true) {
+    if (digitalRead(kBootPin) == HIGH) {
+      if (lastHighMs == 0) lastHighMs = millis();
+      if (millis() - lastHighMs >= kBootDebounceMs) {
+        return lastHighMs;
+      }
+    } else {
+      lastHighMs = 0;
+    }
+    delay(5);
+  }
+}
+
+// Count BOOT button taps within the 3-second selection window. A
+// tap is a falling edge followed by a release within the window.
+// If the user holds BOOT down past the window boundary we treat
+// the press as a long-hold (return 0) and let the caller fall
+// through to the WiFi-reset branch.
+uint32_t readBootPressCount(uint32_t startMs) {
+  const uint32_t deadline = startMs + kBootSelectWindowMs;
+  uint32_t presses = 0;
+  while (millis() < deadline) {
+    const uint32_t pressStart = waitForBootPress(deadline);
+    if (pressStart == 0) {
+      // Window expired with no press seen.
+      return presses;
+    }
+    // Visible feedback: short LED-off flash for a fresh tap.
+    digitalWrite(kLedPin, LOW);
+    delay(60);
+    digitalWrite(kLedPin, HIGH);
+    // The user pressed BOOT. Did they hold it long enough to be a
+    // long-hold (>= 3s), or release quickly for a tap? We wait
+    // for a release, with a deadline at the end of the 3 s window.
+    const uint32_t releaseDeadline = startMs + kBootSelectWindowMs;
+    const uint32_t releaseMs = waitForBootRelease(pressStart);
+    if (releaseMs == 0 || releaseMs > releaseDeadline) {
+      // The user is still holding BOOT past the window. Treat as a
+      // long-hold gesture, not a script tap.
+      Serial.println("[BOOT] long-hold detected by press counter");
+      return 0;
+    }
+    if (releaseMs - pressStart >= 1000) {
+      // Held 1-3 s before releasing: ambiguous, still count it.
+      // The WiFi-reset path only triggers on >= 5 s, so this
+      // press cannot trigger an accidental reset.
+      presses += 1;
+    } else {
+      presses += 1;
+    }
+    delay(kBootDebounceMs);
   }
   return presses;
 }
+
+// Wait for a continuous BOOT press whose cumulative low time
+// reaches thresholdMs. Returns true on success, false if the
+// window expired or the user released too soon. The threshold is
+// anchored to the moment BOOT first went LOW (NOT to setup()),
+// so a press of any length hits the threshold after
+// thresholdMs of cumulative low time.
+bool waitForBootHold(uint32_t thresholdMs) {
+  // Wait for the first falling edge. No outer deadline — we want
+  // to give the user the full press duration to reach the
+  // threshold, so we let them take as long as they like.
+  const uint32_t pressStart = waitForBootPress(UINT32_MAX);
+  if (pressStart == 0) return false;
+  // Sample BOOT every 5 ms; transient HIGHs shorter than
+  // kBootDebounceMs are contact noise and do not reset the
+  // accumulator. Sustained HIGH ends the press. The threshold is
+  // cumulative low time.
+  uint32_t lastHighMs = 0;
+  while (true) {
+    const uint32_t now = millis();
+    if (digitalRead(kBootPin) == LOW) {
+      lastHighMs = 0;
+      if (now - pressStart >= thresholdMs) {
+        Serial.printf("[BOOT] long-press reached at low-time=%u ms (threshold %u)\n",
+                      (unsigned)(now - pressStart), thresholdMs);
+        return true;
+      }
+    } else {
+      if (lastHighMs == 0) lastHighMs = now;
+      if (now - lastHighMs >= kBootDebounceMs) {
+        Serial.printf("[BOOT] released at low-time=%u ms (needed %u)\n",
+                      (unsigned)(lastHighMs - pressStart), thresholdMs);
+        return false;
+      }
+    }
+    delay(5);
+  }
+}
+
+}  // namespace
 
 // Auto-start the embedded script matching the BOOT-button press count. The
 // press counter is consulted exactly once at boot, before the web UI is
@@ -452,17 +521,16 @@ void autoStartFromBoot() {
   digitalWrite(kLedPin, presses > 0 ? LOW : HIGH);
   Serial.printf("[BOOT] selector window closed, presses=%u\n", presses);
   if (presses == 0) {
-    // Step 2: detect a long-press for WiFi reset. We restart the LED
-    // pattern so the user can see the hold timer ticking.
-    Serial.printf("[BOOT] entering long-press window (hold BOOT %u ms)\n",
-                  kBootResetWindowMs);
-    const bool reset = waitForBootLongPress(start, kBootResetWindowMs);
-    Serial.printf("[BOOT] long-press result=%d\n", reset);
-    if (reset) {
+    // Step 2: 5-second long-press to clear WiFi credentials. The
+    // window is open-ended — a press of any length reaches the
+    // threshold after 5 s of cumulative low time. Hold durations of
+    // 5 s, 10 s, 20 s all trigger the reset; the only thing the
+    // user has to time is "at least 5 s".
+    Serial.printf("[BOOT] entering long-press threshold=%u ms\n",
+                  (unsigned)kBootResetThresholdMs);
+    if (waitForBootHold(kBootResetThresholdMs)) {
       Serial.println("[BOOT] long-press detected -> clearing WiFi credentials");
       Wifi.resetCredentials();
-      // LED stays on (now AP) so the user knows the device is ready to
-      // be re-provisioned.
       digitalWrite(kLedPin, LOW);
     }
     return;
@@ -487,75 +555,9 @@ void autoStartFromBoot() {
 // LED is pulsed at 4 Hz during the hold so the user can see the timer
 // tick. We abort early as soon as the user releases so accidental
 // presses do not trigger a reset.
-bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
-  Serial.printf("[BOOT] long-press detector waiting for BOOT LOW (deadline %u ms from start)\n",
-                kBootSelectWindowMs + kBootResetWindowMs);
-  // The short-press window consumed 3 s; the long-press window is an
-  // ADDITIONAL 5 s. The combined deadline is therefore 3 s + 5 s
-  // = kBootSelectWindowMs + kBootResetWindowMs. We wait for BOOT
-  // to actually go LOW (so accidental finger-on-BOOT during boot
-  // doesn't immediately count as a long-press), then start the
-  // 5 s timer from the moment BOOT first reads LOW. If the user
-  // never presses BOOT inside the combined window, we return
-  // false without clearing credentials.
-  const uint32_t deadlineMs = kBootSelectWindowMs + kBootResetWindowMs;
-  while (digitalRead(kBootPin) == HIGH) {
-    if (millis() - startMs > kBootSelectWindowMs) {
-      Serial.println("[BOOT] long-press: BOOT never went LOW in window");
-      return false;
-    }
-    delay(5);
-  }
-  // BOOT is now down. Start the long-press timer. The strict "while
-  // digitalRead == LOW" loop is too brittle on a switch that can
-  // briefly bounce HIGH on a long press; instead we sample the line
-  // and require a release (sustained HIGH for kBootDebounceMs) before
-  // declaring the press ended. The threshold check uses the running
-  // total of LOW-time, not raw time-since-press-start, so brief
-  // bounces don't reset the held counter.
-  const uint32_t pressStart = millis();
-  uint32_t lowStartMs = pressStart;
-  uint32_t lastHighMs = 0;
-  uint32_t nextBlink = pressStart;
-  while (true) {
-    const uint32_t now = millis();
-    // Bounce-tolerant reset. We sample BOOT every 5 ms; transient
-    // HIGHs shorter than the debounce window are contact noise and
-    // do NOT reset the held-time accumulator. Sustained HIGH ends
-    // the press. The threshold is cumulative low time. The total
-    // window is open-ended — there is no setup()-anchored deadline,
-    // so a user who presses BOOT for 20 s still gets the reset
-    // triggered at the 3 s mark and the loop just keeps sampling
-    // for the release that follows.
-    const bool low = (digitalRead(kBootPin) == LOW);
-    if (low) {
-      lastHighMs = 0;
-      if (now - lowStartMs >= kBootResetThresholdMs) {
-        Serial.printf("[BOOT] long-press: threshold reached, low-time=%u ms\n",
-                      (unsigned)(now - lowStartMs));
-        for (int i = 0; i < 3; ++i) {
-          digitalWrite(kLedPin, LOW);
-          delay(60);
-          digitalWrite(kLedPin, HIGH);
-          delay(60);
-        }
-        return true;
-      }
-    } else {
-      if (lastHighMs == 0) lastHighMs = now;
-      if (now - lastHighMs >= kBootDebounceMs) {
-        Serial.printf("[BOOT] long-press: BOOT released at low-time=%u ms\n",
-                      (unsigned)(lastHighMs - lowStartMs));
-        return false;
-      }
-    }
-    if (now >= nextBlink) {
-      digitalWrite(kLedPin, !digitalRead(kLedPin));
-      nextBlink = now + 125;  // 4 Hz
-    }
-    delay(5);
-  }
-}
+// (The old waitForBootLongPress implementation was removed when
+// waitForBootHold landed; the new primitive lives in the anonymous
+// namespace above and is what autoStartFromBoot calls.)
 
 void setup() {
   // Open the control serial first so the WiFi banner is visible.
