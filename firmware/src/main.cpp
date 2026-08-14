@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <esp_log.h>
+
 #include "ControllerReport.h"
 #include "MaterialFarmMacro.h"
 #include "ApricotDenMacro.h"
@@ -506,6 +508,13 @@ bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
 void setup() {
   // Open the control serial first so the WiFi banner is visible.
   ATT_CONTROL_SERIAL.begin(kControlBaudRate);
+  // Silence the TinyUSB USBHID log spam BEFORE USB.begin() runs.
+  // The library prints `SendReport(): not ready` at ERROR level every
+  // ~5 ms while no Switch is plugged in, which would bury our own
+  // Serial output. esp_log_level_set is exported by ESP-IDF 4.4's log
+  // component; arduino-esp32 2.0.17 does not pull in the master
+  // log-level setter but per-tag works once the SDK is initialised.
+  esp_log_level_set("USBHID", ESP_LOG_NONE);
   Serial.println("[boot] setup() enter");
   // Note: the TinyUSB USBHID log spam is silenced inside
   // WifiManager::begin() (the first thing that runs in the WiFi
