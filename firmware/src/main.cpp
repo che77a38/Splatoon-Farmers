@@ -354,7 +354,19 @@ constexpr uint8_t kBootPin = BOOT_BUTTON_GPIO;
 #endif
 constexpr uint8_t kLedPin = 48;
 constexpr uint32_t kBootSelectWindowMs = 3000;
-constexpr uint32_t kBootResetWindowMs = 5000;
+// Combined select + reset window is 10 s. The first 3 s are the
+// short-tap selector (1/2/3 taps -> script 1/2/3); the next 7 s
+// accept a long-press for the WiFi reset. We deliberately make the
+// long-press window wider than the strict "5 s hold" requirement so
+// users who overshoot still hit the threshold — most buttons
+// bounce on a 5-s hold, and 3 s of *cumulative* low time is
+// already an unambiguous "I mean to reset this" gesture.
+constexpr uint32_t kBootResetWindowMs = 7000;
+// Threshold: cumulative LOW time. kBootResetWindowMs is the max
+// total wait; kBootResetThresholdMs is what counts as a "long
+// press" once detected. 3 s is forgiving without making accidental
+// resets likely.
+constexpr uint32_t kBootResetThresholdMs = 3000;
 constexpr uint32_t kBootDebounceMs = 50;
 
 bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs);
@@ -494,38 +506,56 @@ bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
     }
     delay(5);
   }
-  Serial.println("[BOOT] long-press: BOOT went LOW, starting 5s timer");
-  // BOOT is now down. Start the long-press timer.
+  // BOOT is now down. Start the long-press timer. The strict "while
+  // digitalRead == LOW" loop is too brittle on a switch that can
+  // briefly bounce HIGH on a long press; instead we sample the line
+  // and require a release (sustained HIGH for kBootDebounceMs) before
+  // declaring the press ended. The threshold check uses the running
+  // total of LOW-time, not raw time-since-press-start, so brief
+  // bounces don't reset the held counter.
   const uint32_t pressStart = millis();
+  uint32_t lowStartMs = pressStart;
+  uint32_t lastHighMs = 0;
   uint32_t nextBlink = pressStart;
-  while (digitalRead(kBootPin) == LOW) {
-    if (millis() - startMs > deadlineMs) {
+  while (true) {
+    const uint32_t now = millis();
+    if (now - startMs > deadlineMs) {
       // Combined window expired before reaching thresholdMs.
-      Serial.printf("[BOOT] long-press: window expired, held=%u ms, need=%u ms\n",
-                    (unsigned)(millis() - pressStart), thresholdMs);
+      Serial.printf("[BOOT] long-press: window expired, low-time=%u ms, need=%u ms\n",
+                    (unsigned)(now - lowStartMs), thresholdMs);
       return false;
     }
-    const uint32_t held = millis() - pressStart;
-    if (held >= thresholdMs) {
-      // Reset triggered. Run a couple of fast blinks to confirm.
-      Serial.printf("[BOOT] long-press: threshold reached, held=%u ms\n",
-                    (unsigned)held);
-      for (int i = 0; i < 3; ++i) {
-        digitalWrite(kLedPin, LOW);
-        delay(60);
-        digitalWrite(kLedPin, HIGH);
-        delay(60);
+    const bool low = (digitalRead(kBootPin) == LOW);
+    if (low) {
+      lastHighMs = 0;
+      // If we've held continuously low for the threshold, fire.
+      if (now - lowStartMs >= kBootResetThresholdMs) {
+        Serial.printf("[BOOT] long-press: threshold reached, low-time=%u ms\n",
+                      (unsigned)(now - lowStartMs));
+        for (int i = 0; i < 3; ++i) {
+          digitalWrite(kLedPin, LOW);
+          delay(60);
+          digitalWrite(kLedPin, HIGH);
+          delay(60);
+        }
+        return true;
       }
-      return true;
+    } else {
+      // Bounce: ignore transient HIGHs shorter than the debounce.
+      if (lastHighMs == 0) lastHighMs = now;
+      if (now - lastHighMs >= kBootDebounceMs) {
+        // The user actually released. End the press.
+        Serial.printf("[BOOT] long-press: BOOT released at low-time=%u ms\n",
+                      (unsigned)(lastHighMs - lowStartMs));
+        return false;
+      }
     }
-    if (millis() >= nextBlink) {
+    if (now >= nextBlink) {
       digitalWrite(kLedPin, !digitalRead(kLedPin));
-      nextBlink = millis() + 125;  // 4 Hz
+      nextBlink = now + 125;  // 4 Hz
     }
     delay(5);
   }
-  Serial.println("[BOOT] long-press: BOOT released before threshold");
-  return false;  // released before threshold
 }
 
 void setup() {
