@@ -519,16 +519,17 @@ bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
   uint32_t nextBlink = pressStart;
   while (true) {
     const uint32_t now = millis();
-    if (now - startMs > deadlineMs) {
-      // Combined window expired before reaching thresholdMs.
-      Serial.printf("[BOOT] long-press: window expired, low-time=%u ms, need=%u ms\n",
-                    (unsigned)(now - lowStartMs), thresholdMs);
-      return false;
-    }
+    // Bounce-tolerant reset. We sample BOOT every 5 ms; transient
+    // HIGHs shorter than the debounce window are contact noise and
+    // do NOT reset the held-time accumulator. Sustained HIGH ends
+    // the press. The threshold is cumulative low time. The total
+    // window is open-ended — there is no setup()-anchored deadline,
+    // so a user who presses BOOT for 20 s still gets the reset
+    // triggered at the 3 s mark and the loop just keeps sampling
+    // for the release that follows.
     const bool low = (digitalRead(kBootPin) == LOW);
     if (low) {
       lastHighMs = 0;
-      // If we've held continuously low for the threshold, fire.
       if (now - lowStartMs >= kBootResetThresholdMs) {
         Serial.printf("[BOOT] long-press: threshold reached, low-time=%u ms\n",
                       (unsigned)(now - lowStartMs));
@@ -541,10 +542,8 @@ bool waitForBootLongPress(uint32_t startMs, uint32_t thresholdMs) {
         return true;
       }
     } else {
-      // Bounce: ignore transient HIGHs shorter than the debounce.
       if (lastHighMs == 0) lastHighMs = now;
       if (now - lastHighMs >= kBootDebounceMs) {
-        // The user actually released. End the press.
         Serial.printf("[BOOT] long-press: BOOT released at low-time=%u ms\n",
                       (unsigned)(lastHighMs - lowStartMs));
         return false;
