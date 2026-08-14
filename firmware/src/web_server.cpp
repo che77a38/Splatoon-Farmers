@@ -164,11 +164,16 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
 
   // Root path: serve index.html as the default document. The per-asset
   // on() routes above handle subresources like /styles.css and /app.js.
+  // In AP mode the user almost certainly wants the captive-portal
+  // provision page, not the main WebUI, so we redirect there even
+  // when index.html is present in the data partition.
   server_->on("/", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    if (wifi_->mode() == WifiMode::kAp) {
+      req->redirect("/provision");
+      return;
+    }
     if (LittleFS.exists("/index.html")) {
       req->send(LittleFS, "/index.html", "text/html");
-    } else if (wifi_->mode() == WifiMode::kAp) {
-      req->redirect("/provision");
     } else {
       req->send(200, "text/plain",
                 "SplatoonFarmers. Upload data/index.html to flash.");
