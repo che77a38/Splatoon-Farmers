@@ -15,6 +15,10 @@
 #include "web_server.h"
 #include "switch_ESP32.h"
 
+namespace farmers {
+}  // namespace farmers
+NSGamepad Gamepad;
+
 /*
  * Hardware topology:
  *   ESP32-S3 native USB (GPIO19 D-, GPIO20 D+) -> Nintendo Switch dock
@@ -32,7 +36,6 @@ namespace {
 constexpr uint32_t kControlBaudRate = 115200;
 constexpr char kFirmwareVersion[] = "SplatoonFarmers/1.0.0";
 
-NSGamepad Gamepad;
 farmers::MacroEngine MaterialMacro(
     farmers::kMaterialFarmMacro, farmers::kMaterialFarmStepCount,
     farmers::kMaterialFarmLoopGapMs, true);

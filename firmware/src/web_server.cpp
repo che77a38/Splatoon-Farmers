@@ -1,4 +1,5 @@
 #include "web_server.h"
+#include "switch_ESP32.h"
 
 #include <Arduino.h>
 
@@ -9,6 +10,11 @@
 
 #include "config_store.h"
 #include "wifi_manager.h"
+
+// Gamepad lives in main.cpp's anonymous namespace; expose it here so
+// the WebSocket dispatcher can drive raw HID reports through the
+// same singleton that the serial path uses.
+extern NSGamepad Gamepad;
 
 namespace farmers {
 
@@ -385,26 +391,17 @@ void WebServer::wsRawReport(AsyncWebSocketClient* client, const String& line) {
                       &buttons, &dpad, &lx, &ly, &rx, &ry);
   if (parsed != 6) { replyTo(client, "ERR"); return; }
   // Apply — bitmask the buttons to 14 bits just like the serial
-  // path's applyRawReport, then clamp the dpad / axes.
-  const uint16_t bm = static_cast<uint16_t>(buttons & 0x3fff);
-  const uint8_t dp = static_cast<uint8_t>(clampDpad(dpad));
-  const uint8_t x1 = static_cast<uint8_t>(clampU8(lx));
-  const uint8_t y1 = static_cast<uint8_t>(clampU8(ly));
-  const uint8_t x2 = static_cast<uint8_t>(clampU8(rx));
-  const uint8_t y2 = static_cast<uint8_t>(clampU8(ry));
-  // We need the gamepad's NSGamepad. It's owned by main.cpp's
-  // anonymous namespace; we can't link to it directly. Instead the
-  // WebServer reports "OK" without actually applying the report —
-  // the full WebUI -> R -> Switch path is wired in commit 7 once
-  // we have the protocol-forwarder thread-safety story resolved.
-  //
-  // For now we just acknowledge so the wire format is exercised
-  // end-to-end. This is an acknowledged gap; the user gets a real
-  // R frame through the wire once commit 7 lands.
+  // path's applyRawReport, then clamp the dpad / axes. This finally
+  // pushes real HID reports to the Switch: the WS path is no longer
+  // a no-op.
+  Gamepad.buttons((uint16_t)(buttons & 0x3fff));
+  Gamepad.dPad((uint8_t)(dpad > 15 ? 15 : dpad));
+  Gamepad.leftXAxis((uint8_t)(lx > 255 ? 255 : lx));
+  Gamepad.leftYAxis((uint8_t)(ly > 255 ? 255 : ly));
+  Gamepad.rightXAxis((uint8_t)(rx > 255 ? 255 : rx));
+  Gamepad.rightYAxis((uint8_t)(ry > 255 ? 255 : ry));
+  Gamepad.write();
   replyTo(client, "OK");
-  // Silence unused-variable warnings until commit 7 wires these
-  // into the actual gamepad write.
-  (void)bm; (void)dp; (void)x1; (void)y1; (void)x2; (void)y2;
 }
 
 void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
