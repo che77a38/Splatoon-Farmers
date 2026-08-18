@@ -1089,18 +1089,40 @@ if (elements.editorAddMenu && elements.editorAddLists.length) {
   // dropdown keeps tracking the summary button even when the page
   // scrolls or the window changes size. Clamp to the viewport so the
   // panel doesn't overflow the bottom of the screen.
+  //
+  // We also move the panel to <body> on first open so it's not a
+  // descendant of editor-card / control-card / manual-panel — every
+  // ancestor in that chain could be transformed, clipped, or have a
+  // stacking-context-creating ancestor that sinks the panel below
+  // siblings. Promoting the panel to a body child makes it part of the
+  // root stacking context where our z-index wins.
+  const panelEl = elements.editorAddMenu.querySelector(".editor-add-panel");
+  let panelPortaled = false;
   const repositionPanel = () => {
     if (!elements.editorAddMenu.open) return;
-    const panel = elements.editorAddMenu.querySelector(".editor-add-panel");
-    if (!panel) return;
+    if (panelEl && !panelPortaled && panelEl.parentElement !== document.body) {
+      document.body.appendChild(panelEl);
+      panelPortaled = true;
+    }
+    if (!panelEl) return;
     const summary = elements.editorAddMenu.querySelector(".editor-add-summary");
     if (!summary) return;
-    const rect = summary.getBoundingClientRect();
-    const panelRect = panel.getBoundingClientRect();
-    const top = Math.min(rect.bottom + 6, window.innerHeight - panelRect.height - 8);
-    const left = Math.min(rect.left, window.innerWidth - panelRect.width - 8);
-    panel.style.top = `${Math.max(8, top)}px`;
-    panel.style.left = `${Math.max(8, left)}px`;
+    const summaryRect = summary.getBoundingClientRect();
+    const menuRect = elements.editorAddMenu.getBoundingClientRect();
+    const panelRect = panelEl.getBoundingClientRect();
+    // Anchor horizontally to the menu's left edge so the dropdown is
+    // always aligned with the menu regardless of which toolbar item the
+    // menu sits next to. Clamp on the right so it stays in viewport.
+    const left = Math.max(8, Math.min(
+      menuRect.left,
+      window.innerWidth - panelRect.width - 8,
+    ));
+    const top = Math.max(8, Math.min(
+      summaryRect.bottom + 6,
+      window.innerHeight - panelRect.height - 8,
+    ));
+    panelEl.style.top = `${top}px`;
+    panelEl.style.left = `${left}px`;
   };
   elements.editorAddMenu.addEventListener("toggle", repositionPanel);
   window.addEventListener("resize", repositionPanel);
