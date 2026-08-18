@@ -75,21 +75,26 @@ const manualButtons = [
 //                                              rewritten as alternating ZR/ZL
 //                                              taps to pump paint back in)
 const SCRIPTS = {
+  // The three legacy entries are baked into index.html at build time and
+  // sent over the wire via the START / START_APRICOT / START_INKBACK
+  // aliases. The matching START_IDX <index> form is what the new dynamic
+  // entries also use, so every entry — legacy and user-compiled — lives
+  // uniformly behind one sendCommand path.
   "material-farm": {
     label: "杏棱巢穴",
-    command: "START",
+    index: 0,
     stepCount: 48,
     cycleMs: 64995,
   },
   "apricot-den": {
     label: "天妇罗巢穴",
-    command: "START_APRICOT",
+    index: 1,
     stepCount: 35,
     cycleMs: 55750,
   },
   "apricot-den-inkback": {
     label: "天妇罗回墨版",
-    command: "START_INKBACK",
+    index: 2,
     stepCount: 100,
     cycleMs: 95750,
   },
@@ -99,13 +104,24 @@ const SCRIPTS = {
   // stream runner in app.js's startButton handler — never by `sendCommand`.
   custom: {
     label: "自定义",
-    command: null,
+    index: -1,
     stepCount: 0,
     cycleMs: 0,
   },
 };
 const DEFAULT_SCRIPT_KEY = "material-farm";
 const KNOWN_SCRIPT_KEYS = new Set(Object.keys(SCRIPTS));
+
+// The most recent firmware-resident script list, populated by SCRIPT_LIST
+// after connect. Each entry matches the JSON shape the firmware emits:
+// { index, key, label, description, steps, cycle_ms }. We also surface
+// `live = true` so the UI can distinguish firmware-installed chips from
+// the three static ones rendered in index.html.
+let liveScripts = null;
+// Most recent routine string the device reported via a STATUS response —
+// used by the picker to highlight the chip that matches what is actually
+// running on the board.
+let lastDeviceKey = null;
 
 // Script the user has *selected* in the picker. Distinct from `deviceRoutine`,
 // which mirrors the firmware's currently-running script (updated from
@@ -484,6 +500,12 @@ function applyDeviceMessage(message, { syncPicker = false } = {}) {
 }
 
 function onLine(line) {
+  // SCRIPT_LIST reply is consumed by fetchScriptList() and not forwarded
+  // into the regular device-state stream — its `state` / `phase` fields
+  // don't exist, so applyDeviceMessage would silently swallow it.
+  if (scriptListResolver && scriptListResolver(line)) {
+    return;
+  }
   const syncPicker = pendingHelloSync;
   pendingHelloSync = false;
   applyDeviceMessage(parseDeviceLine(line), { syncPicker });
@@ -547,6 +569,12 @@ async function connect() {
     pollTimer = window.setInterval(() => {
       transport?.send("STATUS").catch(onUnexpectedDisconnect);
     }, 1000);
+    // Pull the full script registry once at connect time. The reply arrives
+    // asynchronously on the WS line; we resolve to it via a one-shot
+    // promise that onLine fulfills when it sees a script_list frame. We
+    // send the request *after* HELLO so the firmware's per-line parsing
+    // never interleaves with our "expect one script_list" handshake.
+    fetchScriptList().catch(() => {});
   } catch (error) {
     connected = false;
     transport = null;
@@ -554,6 +582,104 @@ async function connect() {
   } finally {
     busy = false;
     render();
+  }
+}
+
+// One-shot resolver for the SCRIPT_LIST reply. onLine fulfills it when a
+// `script_list` frame arrives; any other line is the regular STATUS flow.
+let scriptListResolver = null;
+function fetchScriptList() {
+  return new Promise((resolve, reject) => {
+    if (!transport) return reject(new Error("not connected"));
+    scriptListResolver = (payload) => {
+      scriptListResolver = null;
+      try {
+        const parsed = JSON.parse(payload);
+        if (parsed && parsed.type === "script_list" && Array.isArray(parsed.scripts)) {
+          populateLiveScripts(parsed.scripts);
+          resolve(parsed);
+          return true;
+        }
+      } catch (_) { /* fall through to keep waiting */ }
+      return false;
+    };
+    const timer = window.setTimeout(() => {
+      if (scriptListResolver) {
+        scriptListResolver = null;
+        reject(new Error("SCRIPT_LIST timeout"));
+      }
+    }, 4000);
+    const orig = scriptListResolver;
+    scriptListResolver = (payload) => {
+      window.clearTimeout(timer);
+      return orig(payload);
+    };
+    transport.send("SCRIPT_LIST").catch((err) => {
+      scriptListResolver = null;
+      window.clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+// Take the parsed script_list payload and merge the firmware-supplied
+// entries into the SCRIPTS table plus the picker DOM. Each firmware entry
+// gets a stable JS key derived from the registry index (since the firmware
+// emits md5 hashes as the user-facing key, those would collide with
+// picker data-script attributes that follow HTML naming conventions).
+function populateLiveScripts(scripts) {
+  liveScripts = scripts;
+  const customChip = elements.scriptChips?.find((c) => c?.dataset.script === "custom");
+  const host = customChip?.parentElement;
+  if (!host) return;
+  // Drop any previously injected live chips so a reconnect rebuilds cleanly.
+  for (const el of Array.from(host.querySelectorAll(".picker-chip--live"))) {
+    el.remove();
+  }
+  for (const s of scripts) {
+    if (s.index < 3) continue;  // legacy 3 already in the static HTML
+    const key = `live-${s.index}`;
+    if (SCRIPTS[key]) continue;  // shouldn't happen; guard for re-runs
+    SCRIPTS[key] = {
+      label: s.label,
+      description: s.description,
+      index: s.index,
+      stepCount: s.steps,
+      cycleMs: s.cycle_ms,
+    };
+    // Step summary: "X 步 · MM:SS.s"
+    const cycleSeconds = Math.round(s.cycle_ms / 100) / 10;
+    const minutes = Math.floor(cycleSeconds / 60);
+    const seconds = (cycleSeconds - minutes * 60).toFixed(1).padStart(4, "0");
+    const summary = `${s.steps} 步 · ${minutes}:${seconds.padStart(2, "0")}`;
+    const btn = document.createElement("button");
+    btn.className = "picker-chip picker-chip--live";
+    btn.type = "button";
+    btn.dataset.script = key;
+    btn.dataset.testid = `script-live-${s.index}`;
+    btn.setAttribute("aria-pressed", "false");
+    btn.disabled = true;
+    btn.title = s.description || s.label;
+    btn.innerHTML = `<strong>${s.label}</strong><small>${summary}</small>`;
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.script;
+      if (!KNOWN_SCRIPT_KEYS.has(target) || target === selectedScript) {
+        return;
+      }
+      selectedScript = target;
+      syncScriptChipUi();
+      const meta = SCRIPTS[selectedScript];
+      elements.routineText.textContent = meta.label;
+      stepCount = meta.stepCount || 1;
+      currentStep = 0;
+      elements.durationText.textContent = formatDuration(meta.cycleMs);
+      elements.stepCountText.textContent = String(meta.stepCount);
+      if (elements.heroStepCount) {
+        elements.heroStepCount.textContent = `${meta.stepCount} STEPS`;
+      }
+    });
+    host.insertBefore(btn, customChip || null);
+    elements.scriptChips?.push(btn);
   }
 }
 
@@ -600,7 +726,15 @@ elements.startButton.addEventListener("click", () => {
   if (selectedScript === "custom") {
     playCustomScript();
   } else {
-    sendCommand(SCRIPTS[selectedScript].command);
+    // Unified dispatch: every firmware-resident routine is reached by
+    // START_IDX <index>, regardless of whether it was hand-coded (3
+    // legacy entries, indices 0..2) or compiled from a user script.
+    const idx = SCRIPTS[selectedScript]?.index;
+    if (typeof idx === "number" && idx >= 0) {
+      sendCommand(`START_IDX ${idx}`);
+    } else {
+      setError("选中脚本无索引,无法启动");
+    }
   }
 });
 elements.stopButton.addEventListener("click", () => {

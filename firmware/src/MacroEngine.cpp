@@ -16,6 +16,23 @@ MacroEngine::MacroEngine(const MacroStep* steps, size_t stepCount,
       report_(kNeutralReport),
       reportChanged_(false) {}
 
+void MacroEngine::setSteps(const MacroStep* steps, size_t stepCount,
+                           uint32_t loopGapMs, bool repeat) {
+  steps_ = steps;
+  stepCount_ = stepCount;
+  loopGapMs_ = loopGapMs;
+  repeat_ = repeat;
+  // Reset transient state so tick() does not see a half-finished cycle
+  // from the previous binding.
+  running_ = false;
+  phase_ = MacroPhase::kIdle;
+  stepIndex_ = 0;
+  phaseStartedAtMs_ = 0;
+  cycleCount_ = 0;
+  report_ = kNeutralReport;
+  reportChanged_ = false;
+}
+
 void MacroEngine::start(uint32_t nowMs) {
   cycleCount_ = 0;
   stepIndex_ = 0;

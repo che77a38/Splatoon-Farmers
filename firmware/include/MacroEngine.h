@@ -27,6 +27,12 @@ class MacroEngine {
   void stop();
   void tick(uint32_t nowMs);
 
+  // Re-bind the engine to a different steps array / timings and reset its
+  // runtime state. Used by the script registry when the user picks a
+  // different routine at runtime; cheaper than spinning up a new instance.
+  void setSteps(const MacroStep* steps, size_t stepCount, uint32_t loopGapMs,
+                bool repeat);
+
   bool running() const;
   MacroPhase phase() const;
   size_t stepIndex() const;

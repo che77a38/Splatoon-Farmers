@@ -1,0 +1,558 @@
+标题: 天埠罗自定义脚本
+数值选项: 一轮时间鲑鱼卵为准,24,0,90
+列表选项: 武器发动模式,长按连射,短按点射
+数值选项: L配件CD若0为自动,0,0,90
+数值选项: R配件CD若0为自动,0,0,90
+数值选项: A配件CD若0为自动,0,0,90
+数值选项: 进图时间,6,0,99
+数值选项: 出图时间,11,0,99
+数值选项: 武器删除轮数,1,0,300
+列表选项: 武器删除,无,仅白色,绿及以下,紫及以下,金及以下
+列表选项: 手柄唤醒初始,是,否
+
+IF 武器发动模式 == 长按连射
+    $武器模式 = 1
+ENDIF
+IF 武器发动模式 == 短按点射
+    $武器模式 = 0
+ENDIF
+$总时长 = 一轮时间鲑鱼卵为准
+$总时长 += 2
+$配件LCD = L配件CD若0为自动
+$配件RCD = R配件CD若0为自动
+$配件ACD = A配件CD若0为自动
+$跑图次数 = 0
+$删除计数 = 0
+$轮数 = 武器删除轮数
+$手动模式标志 =7
+IF $配件LCD == 0
+    $手动模式标志 -= 4
+ENDIF
+IF $配件RCD == 0
+    $手动模式标志 -= 2
+ENDIF
+IF $配件ACD == 0
+    $手动模式标志 -= 1
+ENDIF
+$计数器 = 0
+IF 手柄唤醒初始 == 是
+    CALL 手柄唤醒
+ENDIF
+WAIT 1000
+FOR
+    WAIT 500
+    $跑图次数 +=1
+    $删除计数 +=1
+    PRINT "第" $跑图次数 "跑图"
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    A 50
+    WAIT 50
+    A 50
+    WAIT 1000
+    A 50
+    WAIT 进图时间*1000
+    CALL 图内跑步
+    ZL DOWN
+    WAIT 500
+    LS_UP 1500
+    WAIT 800
+    LS_UP_RIGHT 250
+    WAIT 1500
+    LS_UP 800
+    WAIT 50
+    ZL UP
+    WAIT 50
+    PLUS 50
+    WAIT 100
+    DOWN 50
+    WAIT 100
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 100
+    A 50
+    WAIT 出图时间*1000
+    WAIT 900
+    A 50
+    WAIT 900
+    A 50
+    WAIT 900
+    A 50
+    WAIT 2000
+    A 50
+    WAIT 900
+    A 50
+    WAIT 1000
+    IF $删除计数   == $轮数
+        IF 武器删除 == 仅白色
+            CALL 武器删除白
+        ELIF 武器删除 == 绿及以下
+            CALL 武器删除白绿
+        ELIF 武器删除 == 紫及以下
+            CALL 武器删除白绿紫
+        ELIF 武器删除 == 金及以下
+            CALL 武器删除白绿紫金
+        ENDIF
+        $删除计数 = 0
+    ENDIF
+NEXT
+#-------------------------------------------------
+FUNC 图内跑步
+    WAIT 500
+    #————————————————————————
+    IF $手动模式标志 == 0        #全自动
+        IF $武器模式 == 1
+            ZR DOWN
+            WAIT $总时长*1000
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR $总时长*10
+                ZR 50
+                WAIT 50
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    IF $手动模式标志 == 1        #A键非自动
+        IF $武器模式 == 1
+            ZR DOWN
+            FOR
+                WAIT 50
+                $计数器 += 50
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR
+                ZR 50
+                WAIT 50
+                $计数器 += 100
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    IF $手动模式标志 == 2        #R键非自动
+        IF $武器模式 == 1
+            ZR DOWN
+            FOR
+                WAIT 50
+                $计数器 += 50
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR
+                ZR 50
+                WAIT 50
+                $计数器 += 100
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    IF $手动模式标志 == 3        #RA键非自动
+        IF $武器模式 == 1
+            ZR DOWN
+            FOR
+                WAIT 50
+                $计数器 += 50
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR
+                ZR 50
+                WAIT 50
+                $计数器 += 100
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    IF $手动模式标志 == 4        #L键非自动
+        IF $武器模式 == 1
+            ZR DOWN
+            FOR
+                WAIT 50
+                $计数器 += 50
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR
+                ZR 50
+                WAIT 50
+                $计数器 += 100
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    IF $手动模式标志 == 5        #LA键非自动
+        IF $武器模式 == 1
+            ZR DOWN
+            FOR
+                WAIT 50
+                $计数器 += 50
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR
+                ZR 50
+                WAIT 50
+                $计数器 += 100
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    IF $手动模式标志 == 6        #LR键非自动
+        IF $武器模式 == 1
+            ZR DOWN
+            FOR
+                WAIT 50
+                $计数器 += 50
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR
+                ZR 50
+                WAIT 50
+                $计数器 += 100
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    IF $手动模式标志 == 7        #全手动
+        IF $武器模式 == 1
+            ZR DOWN
+            FOR
+                WAIT 50
+                $计数器 += 50
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+            ZR UP
+        ENDIF
+        IF $武器模式 == 0
+            FOR
+                ZR 50
+                WAIT 50
+                $计数器 += 100
+                IF $计数器 % ($配件LCD*1000) == 0
+                    L 50
+                ENDIF
+                IF $计数器 % ($配件RCD*1000) == 0
+                    R 50
+                ENDIF
+                IF $计数器 % ($配件ACD*1000) == 0
+                    A 50
+                ENDIF
+                IF $计数器 % ($总时长*1000) == 0
+                    $计数器 = 0
+                    BREAK
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+    #————————————————————————
+    WAIT 50
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 手柄唤醒
+    A 50
+    WAIT 1000
+    A 50
+    WAIT 1000
+    L DOWN
+    R DOWN
+    WAIT 500
+    L UP
+    R UP
+    WAIT 500
+    A 50
+    WAIT 500
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白绿
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白绿紫
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白绿紫金
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+
+

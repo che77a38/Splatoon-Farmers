@@ -1,0 +1,313 @@
+标题: 涂击队62级跑图
+数值选项: 进图时间,6,0,99
+数值选项: 出图时间,11,0,99
+数值选项: 武器删除轮数,1,0,300
+列表选项: 武器删除,无,仅白色,绿及以下,紫及以下,金及以下
+列表选项: 手柄唤醒初始,否,是
+
+$跑图次数 = 0
+$删除计数 = 0
+$轮数 = 武器删除轮数
+IF 手柄唤醒初始 == 是
+    CALL 手柄唤醒
+ENDIF
+WAIT 1000
+FOR
+    WAIT 500
+    $跑图次数 +=1
+    $删除计数 +=1
+    PRINT "第" $跑图次数 "跑图"
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    A 50
+    WAIT 50
+    A 50
+    WAIT 1000
+    A 50
+    WAIT 进图时间*1000
+    CALL 图内跑步
+    WAIT 出图时间*1000
+    WAIT 900
+    A 50
+    WAIT 900
+    A 50
+    WAIT 900
+    A 50
+    WAIT 2000
+    A 50
+    WAIT 900
+    A 50
+    WAIT 1000
+    IF $删除计数   == $轮数
+        IF 武器删除 == 仅白色
+            CALL 武器删除白
+        ELIF 武器删除 == 绿及以下
+            CALL 武器删除白绿
+        ELIF 武器删除 == 紫及以下
+            CALL 武器删除白绿紫
+        ELIF 武器删除 == 金及以下
+            CALL 武器删除白绿紫金
+        ENDIF
+        $删除计数 = 0
+    ENDIF
+NEXT
+#-------------------------------------------------
+FUNC 图内跑步 #L为跳跃、R为钩索、A为回旋镖
+    WAIT 600
+    LS_DOWN 50
+    WAIT 100
+    B 50
+    WAIT 100
+    B 50
+    WAIT 100
+    LS_RIGHT 500
+    WAIT 100
+    Y 50
+    WAIT 100
+    LS_UP_LEFT DOWN
+    WAIT 300
+    R 50
+    WAIT 900
+    LS_UP_LEFT UP
+    WAIT 50
+    LS_UP DOWN
+    WAIT 900
+    L 50
+    WAIT 1800
+    A 50
+    WAIT 300
+    LS_UP UP
+    WAIT 100
+    LS_LEFT 600
+    WAIT 100
+    Y 50
+    WAIT 100
+    LS_UP_LEFT DOWN
+    WAIT 100
+    L 50
+    WAIT 1200
+    R 50
+    WAIT 1200
+    L 50
+    WAIT 1200
+    LS_UP_LEFT UP
+    LS_UP DOWN
+    R 50
+    WAIT 600
+    A 50
+    WAIT 600
+    L 50
+    WAIT 1200
+    R 50
+    WAIT 100
+    ZL DOWN
+    WAIT 3500
+    ZL UP
+    LS_UP UP
+    WAIT 500
+    LS_LEFT 500
+    WAIT 100
+    Y 50
+    WAIT 100
+    LS_UP 300
+    WAIT 100
+    ZL DOWN
+    WAIT 100
+    LS_UP 900
+    WAIT 100
+    ZL UP
+    WAIT 100
+    LS_LEFT 500
+    WAIT 100
+    Y 50
+    WAIT 1500
+    ZL DOWN
+    WAIT 100
+    LS_UP 600
+    WAIT 100
+    ZL UP
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 手柄唤醒
+    A 50
+    WAIT 1000
+    A 50
+    WAIT 1000
+    L DOWN
+    R DOWN
+    WAIT 500
+    L UP
+    R UP
+    WAIT 500
+    A 50
+    WAIT 500
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白绿
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白绿紫
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+#-------------------------------------------------
+FUNC 武器删除白绿紫金
+    WAIT 200
+    X 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    UP 50
+    WAIT 500
+    A 50
+    WAIT 1500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    X 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 500
+    DOWN 50
+    WAIT 500
+    A 50
+    WAIT 500
+    PLUS 50
+    WAIT 500
+    RIGHT 50
+    WAIT 500
+    A 50
+    WAIT 4000
+    B 50
+    WAIT 500
+    B 50
+    WAIT 1000
+ENDFUNC
+#-------------------------------------------------
+

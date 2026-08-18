@@ -10,6 +10,7 @@
 #include "ApricotDenMacro.h"
 #include "ApricotDenInkbackMacro.h"
 #include "MacroEngine.h"
+#include "scripts_index.inc"
 #include "config_store.h"
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -55,15 +56,19 @@ static void handleLine(char* line);
 constexpr uint32_t kControlBaudRate = 115200;
 constexpr char kFirmwareVersion[] = "SplatoonFarmers/1.0.0";
 
-farmers::MacroEngine MaterialMacro(
-    farmers::kMaterialFarmMacro, farmers::kMaterialFarmStepCount,
-    farmers::kMaterialFarmLoopGapMs, true);
-farmers::MacroEngine ApricotMacro(
-    farmers::kApricotDenMacro, farmers::kApricotDenStepCount,
-    farmers::kApricotDenLoopGapMs, true);
-farmers::MacroEngine ApricotInkbackMacro(
-    farmers::kApricotDenInkbackMacro, farmers::kApricotDenInkbackStepCount,
-    farmers::kApricotDenInkbackLoopGapMs, true);
+// One MacroEngine instance, rebound at runtime via setSteps() when the user
+// picks a different routine. The compiled macro arrays live in
+// firmware/include/Script_*.h and MaterialFarmMacro.h / ApricotDenMacro.h /
+// ApricotDenInkbackMacro.h, all surfaced through scripts_index.inc.
+farmers::MacroEngine g_macro(
+    farmers::kCompiledScripts[0].steps,
+    farmers::kCompiledScripts[0].step_count,
+    0 /* loopGapMs — compiled scripts bake any gap into cycle_ms */,
+    true /* repeat */);
+
+// Index into kCompiledScripts for the currently active routine. The web
+// UI / BOOT button / serial START_IDX <n> command all write here.
+uint8_t g_script_index = 0;
 
 // Persistent config (NVS) + WiFi AP/STA state machine + web server.
 // These are owned at file scope so the existing serial-protocol handlers
@@ -73,26 +78,12 @@ farmers::ConfigStore Config;
 farmers::WifiManager Wifi;
 farmers::WebServer Http;
 
-// Currently selected macro for START* commands. STOP is script-agnostic.
-enum class ActiveScript : uint8_t { kMaterial, kApricot, kApricotInkback };
-ActiveScript Active = ActiveScript::kMaterial;
-
 farmers::MacroEngine& activeMacro() {
-  switch (Active) {
-    case ActiveScript::kApricotInkback: return ApricotInkbackMacro;
-    case ActiveScript::kApricot:         return ApricotMacro;
-    case ActiveScript::kMaterial:        return MaterialMacro;
-  }
-  return MaterialMacro;
+  return g_macro;
 }
 
 const char* activeScriptName() {
-  switch (Active) {
-    case ActiveScript::kApricotInkback: return "apricot-den-inkback";
-    case ActiveScript::kApricot:        return "apricot-den";
-    case ActiveScript::kMaterial:       return "material-farm";
-  }
-  return "material-farm";
+  return farmers::kCompiledScripts[g_script_index].key;
 }
 
 char LineBuffer[128];
@@ -151,34 +142,17 @@ const char* phaseName(farmers::MacroPhase phase) {
   }
 }
 
-// Per-script metadata for emitState(). Returns the static descriptor matching
-// the currently selected script so the JSON reflects whichever routine the
-// caller is asking about.
+// Per-script metadata for emitState(). Pulled directly from the registry
+// entry so the JSON always reflects whichever routine is currently active.
 struct ScriptMeta {
   const char* name;
   size_t stepCount;
-  uint32_t durationMs;
-  uint32_t loopGapMs;
   uint32_t cycleMs;
 };
 
 ScriptMeta activeMeta() {
-  if (Active == ActiveScript::kApricotInkback) {
-    return {"apricot-den-inkback", farmers::kApricotDenInkbackStepCount,
-            farmers::kApricotDenInkbackDurationMs,
-            farmers::kApricotDenInkbackLoopGapMs,
-            farmers::kApricotDenInkbackCycleMs};
-  }
-  if (Active == ActiveScript::kApricot) {
-    return {"apricot-den",       farmers::kApricotDenStepCount,
-            farmers::kApricotDenDurationMs,
-            farmers::kApricotDenLoopGapMs,
-            farmers::kApricotDenCycleMs};
-  }
-  return {"material-farm",      farmers::kMaterialFarmStepCount,
-          farmers::kMaterialFarmDurationMs,
-          farmers::kMaterialFarmLoopGapMs,
-          farmers::kMaterialFarmCycleMs};
+  const auto& s = farmers::kCompiledScripts[g_script_index];
+  return {s.key, s.step_count, s.cycle_ms};
 }
 
 void emitStateImpl(const char* type, LineReplyFn reply, void* ctx) {
@@ -191,20 +165,23 @@ void emitStateImpl(const char* type, LineReplyFn reply, void* ctx) {
   // path) through the unified reply callback. 384 bytes is well above
   // the worst-case output (~290 chars with full field counts).
   char buf[384];
+  // Scripts in the registry have no loop gap baked in; duration_ms and
+  // cycle_ms are equal, and loop_gap_ms is 0. That keeps the web-side
+  // JSON shape unchanged for the legacy three scripts too.
+  const uint32_t cycle_ms = meta.cycleMs;
   const int n = snprintf(
       buf, sizeof(buf),
       "{\"type\":\"%s\",\"ok\":true,\"firmware\":\"%s\","
       "\"routine\":\"%s\",\"embedded\":true,\"state\":\"%s\","
       "\"phase\":\"%s\",\"step\":%u,\"steps\":%u,\"cycle\":%lu,"
-      "\"duration_ms\":%lu,\"loop_gap_ms\":%lu,\"cycle_ms\":%lu}\n",
+      "\"duration_ms\":%lu,\"loop_gap_ms\":0,\"cycle_ms\":%lu}\n",
       type, kFirmwareVersion, meta.name,
       macro.running() ? "running" : "idle",
       phaseName(macro.phase()), static_cast<unsigned int>(visibleStep),
       static_cast<unsigned int>(meta.stepCount),
       static_cast<unsigned long>(macro.cycleCount()),
-      static_cast<unsigned long>(meta.durationMs),
-      static_cast<unsigned long>(meta.loopGapMs),
-      static_cast<unsigned long>(meta.cycleMs));
+      static_cast<unsigned long>(cycle_ms),
+      static_cast<unsigned long>(cycle_ms));
   if (n > 0 && reply) reply(buf, ctx);
 }
 
@@ -234,10 +211,55 @@ void flushMacroReport() {
 // START_APRICOT followed by STOP still halts the apricot script even if the
 // caller switches back to material-farm mid-stop.
 void stopAllMacros() {
-  MaterialMacro.stop();
-  ApricotMacro.stop();
-  ApricotInkbackMacro.stop();
+  g_macro.stop();
   flushMacroReport();
+}
+
+// Activate the script at registry index `idx`. Re-points the singleton
+// g_macro at the new MacroStep array via setSteps(), stops the previous
+// routine, and starts the new one with a freshly-anchored timestamp.
+// Returns nothing; on success it emits a status JSON via the same reply
+// sink the rest of handleLineImpl uses.
+static void activateScriptIndex(uint8_t idx, LineReplyFn reply, void* ctx) {
+  if (idx >= farmers::kCompiledScriptCount) {
+    reply("ERR", ctx);
+    return;
+  }
+  const auto& s = farmers::kCompiledScripts[idx];
+  g_script_index = idx;
+  g_macro.setSteps(s.steps, s.step_count, 0, true);
+  stopAllMacros();
+  g_macro.start(millis());
+  flushMacroReport();
+  emitStateImpl("status", reply, ctx);
+}
+
+static void emitScriptList(LineReplyFn reply, void* ctx) {
+  // Emit the registry as one JSON-array line so the WS path can carry the
+  // full list without truncation at any specific cell. Format mirrors
+  // emitStateImpl's compactness.
+  String out;
+  out.reserve(64 + 96 * farmers::kCompiledScriptCount);
+  out += "{\"type\":\"script_list\",\"ok\":true,\"scripts\":[";
+  for (size_t i = 0; i < farmers::kCompiledScriptCount; ++i) {
+    const auto& s = farmers::kCompiledScripts[i];
+    if (i > 0) out += ',';
+    out += "{\"index\":";
+    out += String((unsigned)i);
+    out += ",\"key\":\"";
+    out += s.key;
+    out += "\",\"label\":\"";
+    out += s.label;
+    out += "\",\"description\":\"";
+    out += s.description;
+    out += "\",\"steps\":";
+    out += String((unsigned)s.step_count);
+    out += ",\"cycle_ms\":";
+    out += String((unsigned)s.cycle_ms);
+    out += '}';
+  }
+  out += "]}\n";
+  reply(out.c_str(), ctx);
 }
 
 void handleLineImpl(char* line, LineReplyFn reply, void* ctx) {
@@ -274,45 +296,52 @@ void handleLineImpl(char* line, LineReplyFn reply, void* ctx) {
     reply("OK", ctx);
     return;
   }
-  // Script selection. START / START_MATERIAL = material-farm (default);
-  // START_APRICOT = apricot-den. Selecting a script always stops whichever
-    // script is currently running so a stale engine never keeps emitting HID
-    // reports after a switch.
+  // Script selection. START / START_MATERIAL → material-farm (legacy alias
+  // for scripts_index.inc entry 0); START_APRICOT → apricot-den (entry 1);
+  // START_INKBACK → apricot-den-inkback (entry 2). START_IDX <n> selects
+  // any entry by registry index — the path the web UI uses for chips
+  // beyond the legacy three.
   if (strcmp(line, "START") == 0 ||
       strcmp(line, "START_MATERIAL") == 0 ||
       strcmp(line, "START_DEFAULT") == 0) {
-    Active = ActiveScript::kMaterial;
-    stopAllMacros();
-    farmers::MacroEngine& macro = activeMacro();
-    macro.start(millis());
-    flushMacroReport();
-    emitStateImpl("status", reply, ctx);
+    activateScriptIndex(0, reply, ctx);
     return;
   }
   if (strcmp(line, "START_APRICOT") == 0 ||
       strcmp(line, "START2") == 0) {
-    Active = ActiveScript::kApricot;
-    stopAllMacros();
-    farmers::MacroEngine& macro = activeMacro();
-    macro.start(millis());
-    flushMacroReport();
-    emitStateImpl("status", reply, ctx);
+    activateScriptIndex(1, reply, ctx);
     return;
   }
   if (strcmp(line, "START_INKBACK") == 0 ||
       strcmp(line, "START3") == 0) {
-    Active = ActiveScript::kApricotInkback;
-    stopAllMacros();
-    farmers::MacroEngine& macro = activeMacro();
-    macro.start(millis());
-    flushMacroReport();
-    emitStateImpl("status", reply, ctx);
+    activateScriptIndex(2, reply, ctx);
+    return;
+  }
+  // START_IDX <n> for everything beyond the legacy three. The web UI emits
+  // this for every chip in the picker, including the legacy three
+  // (START_IDX 0 / 1 / 2 are valid and equivalent to the bare START* forms
+  // above).
+  if (strncmp(line, "START_IDX ", 10) == 0) {
+    unsigned long idx = 0;
+    if (sscanf(line + 10, "%lu", &idx) != 1 ||
+        idx >= farmers::kCompiledScriptCount) {
+      reply("ERR", ctx);
+      return;
+    }
+    activateScriptIndex(static_cast<uint8_t>(idx), reply, ctx);
     return;
   }
   if (strcmp(line, "SCRIPT") == 0) {
     char buf[64];
     snprintf(buf, sizeof(buf), "{\"script\":\"%s\"}\n", activeScriptName());
     reply(buf, ctx);
+    return;
+  }
+  // SCRIPT_LIST returns the full registry as JSON. The web UI calls this
+  // once at startup so it can render chips for every firmware-resident
+  // routine without needing to know each script's key in advance.
+  if (strcmp(line, "SCRIPT_LIST") == 0) {
+    emitScriptList(reply, ctx);
     return;
   }
 
@@ -610,14 +639,17 @@ void autoStartFromBoot() {
   Serial.printf("[BOOT] 选择窗口结束，按下次数=%u, longHold=%d\n",
                 (unsigned)sel.presses, (int)sel.longHold);
   if (sel.presses > 0 && !sel.longHold) {
-    // Real taps detected — pick the script.
-    if (sel.presses == 1) Active = ActiveScript::kMaterial;
-    else if (sel.presses == 2) Active = ActiveScript::kApricot;
-    else /* sel.presses >= 3 */ Active = ActiveScript::kApricotInkback;
-    stopAllMacros();
-    farmers::MacroEngine& macro = activeMacro();
-    macro.start(millis());
-    flushMacroReport();
+    // Real taps detected — pick the script. The user-facing convention
+    // is "N taps → scripts_index.inc entry N-1". A long-tap count above
+    // the registry size clamps to the last entry, which keeps the UX
+    // predictable: 4 / 5 / 10 taps all map to entry 3 (the first
+    // user-compiled routine), rather than silently doing nothing.
+    const unsigned long taps = sel.presses;
+    const uint8_t idx =
+        taps <= farmers::kCompiledScriptCount
+            ? static_cast<uint8_t>(taps - 1)
+            : static_cast<uint8_t>(farmers::kCompiledScriptCount - 1);
+    activateScriptIndex(idx, &replySerial, nullptr);
     digitalWrite(kLedPin, LOW);
     return;
   }
