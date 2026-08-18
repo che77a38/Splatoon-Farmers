@@ -1520,6 +1520,43 @@ footer {
   opacity: 0.4;
 }
 
+.editor-add-input-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-top: 1px dashed rgba(30, 224, 189, 0.25);
+  color: var(--paper-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.editor-add-input-label {
+  text-transform: uppercase;
+}
+
+.editor-add-input {
+  width: 90px;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(30, 224, 189, 0.35);
+  color: var(--paper);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  clip-path: polygon(2px 0, 100% 1px, calc(100% - 2px) 100%, 0 calc(100% - 3px));
+}
+
+.editor-add-input:focus-visible {
+  outline: 1px solid rgba(30, 224, 189, 0.65);
+  outline-offset: 1px;
+}
+
 .editor-repeat-toggle {
   display: inline-flex;
   align-items: center;

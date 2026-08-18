@@ -257,7 +257,7 @@ export const STEP_TEMPLATES = Object.freeze([
   { id: "rstick-right",     group: "rstick", label: "右摇杆 →",    build: (ms) => newStick(128, 128, 255, 128, ms) },
   // Convenience.
   { id: "release", group: "control", label: "松开（neutral）", build: (ms) => newRelease(ms) },
-  { id: "delay",   group: "control", label: "等待延时（1000ms）", build: () => newDelay(1000) },
+  { id: "delay",   group: "control", label: "等待延时", build: () => newDelay(1000) },
 ]);
 
 function newStick(lx, ly, rx, ry, durationMs) {

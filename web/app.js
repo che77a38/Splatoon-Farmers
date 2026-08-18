@@ -1047,7 +1047,14 @@ if (!transportSupported) {
 // Populate the "+ 添加步骤" menu by splitting STEP_TEMPLATES into their
 // `group` buckets. Each <li> renders a single button; clicking inserts a
 // new step at the end of customScript and closes the details panel.
+//
+// The control group includes a "delay" template whose duration is taken
+// from a sibling <input data-template-group="control-input"> rather than
+// the hard-coded 1000 ms default — read that input on click.
 if (elements.editorAddMenu && elements.editorAddLists.length) {
+  const delayInput = elements.editorAddMenu.querySelector(
+    '[data-testid="editor-delay-input"]',
+  );
   for (const list of elements.editorAddLists) {
     const group = list.dataset.templateGroup;
     const templates = STEP_TEMPLATES.filter((t) => t.group === group);
@@ -1059,7 +1066,13 @@ if (elements.editorAddMenu && elements.editorAddLists.length) {
       btn.dataset.templateId = tpl.id;
       btn.textContent = tpl.label;
       btn.addEventListener("click", () => {
-        const step = getStepTemplate(tpl.id);
+        let step;
+        if (tpl.id === "delay" && delayInput) {
+          const ms = Math.max(10, Math.round(Number(delayInput.value) || 1000));
+          step = { type: "delay", durationMs: ms };
+        } else {
+          step = getStepTemplate(tpl.id);
+        }
         if (!step) return;
         customScript.steps.push(step);
         renderEditorCard();
@@ -1099,12 +1112,18 @@ if (elements.editorAddMenu && elements.editorAddLists.length) {
   const panelEl = elements.editorAddMenu.querySelector(".editor-add-panel");
   let panelPortaled = false;
   const repositionPanel = () => {
-    if (!elements.editorAddMenu.open) return;
-    if (panelEl && !panelPortaled && panelEl.parentElement !== document.body) {
+    if (!panelEl) return;
+    if (!elements.editorAddMenu.open) {
+      // The panel was portaled to <body>; toggling <details> closed
+      // wouldn't hide it on its own, so we hide it explicitly.
+      panelEl.style.display = "none";
+      return;
+    }
+    panelEl.style.display = "";
+    if (!panelPortaled && panelEl.parentElement !== document.body) {
       document.body.appendChild(panelEl);
       panelPortaled = true;
     }
-    if (!panelEl) return;
     const summary = elements.editorAddMenu.querySelector(".editor-add-summary");
     if (!summary) return;
     const summaryRect = summary.getBoundingClientRect();
@@ -1127,6 +1146,10 @@ if (elements.editorAddMenu && elements.editorAddLists.length) {
   elements.editorAddMenu.addEventListener("toggle", repositionPanel);
   window.addEventListener("resize", repositionPanel);
   window.addEventListener("scroll", repositionPanel, true);
+  // Run once on load so the panel starts hidden regardless of whether
+  // <details> was rendered open by default (the browser normally
+  // doesn't, but the explicit hide defends against any initial open).
+  repositionPanel();
 }
 
 render();
