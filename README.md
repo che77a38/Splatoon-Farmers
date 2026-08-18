@@ -8,8 +8,9 @@
 
 An unofficial ESP32-S3 wired controller and browser console for material
 farming in [Splatoon Raiders](https://www.nintendo.com/us/store/products/splatoon-raiders-switch-2/).
-It is intentionally small: connect the board, open the page, and start the
-board-resident routine.
+It runs entirely on the microcontroller: open the page, pick a script, hit
+start. The board holds the routine in flash and keeps looping even if the
+browser or WiFi link drops.
 
 ![](./images/banner.png)
 
@@ -20,28 +21,34 @@ Required gears described in this video: [Bilibili](https://www.bilibili.com/vide
 ## What it does
 
 - Emulates a wired Nintendo Switch controller over the ESP32-S3 native USB port.
-- Keeps the complete 48-step, `63.595 s` loop in firmware Flash.
-- Continues a running loop if the browser or USB-UART connection drops.
-- Starts, stops, and reports progress through a Web Serial page.
-- Provides every digital controller button and D-pad direction for mouse,
-  touch, and keyboard input.
-- Leaves both analog sticks centered during manual input.
-
-The browser sends only high-level `START`, `STOP`, and status commands during
-automatic operation. Timing is owned by the microcontroller, so normal serial
-jitter cannot break a sequence halfway through.
+- Keeps ten board-resident routines in firmware Flash and cycles through them
+  on demand. Three are hand-coded (legacy material / apricot / apricot-inkback),
+  seven are compiled at build time from user-supplied 文字版代码 scripts.
+- Runs every routine entirely on the microcontroller. The browser is only
+  used to pick a script and start/stop. Timing is MCU-owned, so serial
+  jitter or dropped connections cannot break a sequence halfway through.
+- Two transport paths to the board: a direct Web Serial (CH340 / USB-UART)
+  link, **or** a WiFi access point / station mode that exposes the same
+  console over WebSocket. Either path works for any of the ten routines.
+- Manual override: every digital button, D-pad direction, and both analog
+  sticks support mouse, touch, and keyboard input. Manual input always wins
+  over an in-flight routine — any non-neutral input stops the embedded
+  macro and takes over the bus.
 
 ## Hardware
 
-The recommended board is an `ESP32-S3-DevKitC-1` with separate native USB and
-USB-UART connectors.
+The recommended board is an `ESP32-S3-DevKitC-1` (N8 or N16R8 variant) with
+separate native USB and USB-UART connectors. The N16R8 variant is what the
+board profile in `platformio.ini` is tuned for.
 
 | Link | Board connection | Purpose |
 | --- | --- | --- |
 | Native USB | GPIO19 D- / GPIO20 D+ | Wired controller to the Switch dock |
-| USB-UART | UART0 through the onboard bridge | Browser control from the computer |
+| USB-UART | UART0 through the onboard bridge | Serial / Web Serial control from the computer |
 
-Both links can stay connected at the same time. See the
+Both links can stay connected at the same time. The board can also reach
+the browser over WiFi (AP mode `SplatoonFarmers-XXXX` with no credentials,
+or STA mode after a one-time provisioning step). See
 [ESP32-S3-DevKitC-1 user guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.0.html)
 for connector placement.
 
@@ -61,71 +68,144 @@ Install Python 3 and [PlatformIO Core](https://docs.platformio.org/en/latest/cor
 
 ```bash
 python3 -m pip install platformio==6.1.19
+```
+
+Compile the firmware:
+
+```bash
 pio run
 ```
 
-The environment targets `ESP32-S3-DevKitC-1-N8`, Arduino-ESP32 2.0.17, and
-pins [`switch_ESP32`](https://github.com/esp32beans/switch_ESP32) to a known
-working commit. Flash through the board's USB-UART connector:
+Flash the firmware and the data partition (the `web/` payload — index.html,
+app.js, styles.css, etc. — gets baked into LittleFS and served from the
+firmware at runtime):
 
 ```bash
 pio run -t upload --upload-port /dev/cu.usbserial-XXXX
+pio run -t uploadfs --upload-port /dev/cu.usbserial-XXXX
 ```
 
 Use a port such as `COM5` on Windows or `/dev/ttyUSB0` on Linux. After flashing:
 
 1. Connect native USB to the Nintendo Switch dock.
-2. Connect USB-UART to the computer.
-3. Start the local WebUI.
+2. (Optional) Connect USB-UART to the computer for the Web Serial path.
+3. Power the board — it boots into WiFi AP or STA mode (see below).
+
+To serve the web UI from your computer while developing (instead of from
+the firmware's LittleFS):
 
 ```bash
 npm run serve
 ```
 
-Open <http://localhost:4173> in desktop Chrome or Edge. Web Serial requires a
-secure context, so opening `web/index.html` directly is not supported.
+Open <http://localhost:4173> in desktop Chrome or Edge. Web Serial requires
+a secure context, so opening `web/index.html` directly is not supported.
+
+### WiFi modes
+
+- **AP provisioning** (no NVS credentials, or 5 s BOOT-button hold): the
+  board opens `SplatoonFarmers-XXXX` WiFi. The captive portal
+  automatically redirects any browser to `http://192.168.4.1/provision`
+  where you select a home WiFi and enter its password.
+- **STA mode** (credentials saved): the board joins the saved network and
+  advertises itself via mDNS as `splatoon.local`. The web console is
+  available at `http://splatoon.local/`. Boot banner prints the resolved IP
+  on the serial line for environments where mDNS is blocked.
+
+The first connection after a fresh flash goes through AP provisioning.
+After saving credentials, the board restarts into STA mode and the
+web UI is reachable at `splatoon.local` from any device on the same
+LAN.
 
 ## Use
 
-1. Select **连接手柄** and choose the DevKitC-1 USB-UART port.
-2. Wait for **已连接 · 待命**.
-3. Select **开始刷取**. The routine restarts at step 1 and loops until stopped.
-4. Select **停止** to immediately send a neutral controller report.
+1. Open the page. By default the board serves the UI from its own data
+   partition at `http://splatoon.local/` (WiFi mode) or
+   `http://localhost:4173/` (npm serve).
+2. The picker shows every firmware-resident routine, with Chinese label,
+   step count, and cycle duration. Pick one.
+3. Hit **开始刷取** to start it, **停止** to halt with a neutral report.
+4. Manual input (mouse / touch / keyboard) at any time overrides the
+   running routine — sending a non-neutral frame stops the macro engine
+   and takes over the bus. Losing focus or hiding the tab releases all
+   browser-held inputs.
 
-Disconnecting USB-UART does not stop an already running routine. Reconnect and
-stop it, reset the board, or remove power when you need to end it.
+### BOOT button
 
-### Manual controls
+- **1 to N taps within 3 s of boot** auto-starts the corresponding
+  registry entry. With ten routines, taps beyond ten clamp to the last
+  one. The LED flashes to confirm the tap count.
+- **Hold for 5 s** wipes the saved WiFi credentials and bounces the board
+  back into AP provisioning. The LED blinks at 4 Hz to confirm the
+  threshold reached.
 
-Manual input stops the automatic routine before sending a raw controller
-report. Buttons support hold, multi-key combinations, mouse, multitouch, and
-keyboard. Losing focus or hiding the tab releases all browser-held inputs.
+### Editor
 
-| Controller | Keyboard | Controller | Keyboard |
-| --- | --- | --- | --- |
-| X / Y / B / A | I / J / K / L | D-pad | Arrow keys |
-| L / R | Q / E | ZL / ZR | 1 / 3 |
-| L3 / R3 | Z / X | − / + | − / = |
-| Capture / Home | C / H | | |
+The custom-script editor below the picker has three modes:
 
-If USB-UART is physically unplugged while a button is held, the browser cannot
-send the final neutral report. Reset the board to release that last state.
+- **+ 添加步骤** — pick a button, dpad, or stick direction and insert a
+  step. Each press auto-releases (you'll see the step get a `hold` and a
+  trailing `release`). `等待延时` lets you pick any millisecond count
+  via the inline number input.
+- **📋 导入固件脚本** — fetch any firmware-resident routine back into
+  the editor for modification. Steps are converted from the firmware's
+  `hold`/`release` form into the editor's nested shape. The result
+  lives in `localStorage` and runs as the **自定义** chip.
+- **JSON 导入 / 导出** — exchange full scripts as files.
+
+## Adding your own scripts
+
+The seven user-compiled scripts in the default repository are sourced from
+the user's [文字版代码](#scripts-macros--diretory-layout) `.txt`
+collection. The compiler lowers a useful subset of that DSL
+(`WAIT`, button presses for N ms, stick direction including
+persist-via-DOWN/UP, `$var` assignments, parameter folding, IF/ELIF/ELSE
+constant folding, FUNC/CALL inlining, FOR with constant count
+unrolled at compile time) to a `MacroStep[]` header that matches the
+existing `MaterialFarmMacro.h` layout.
+
+To add a new script:
+
+1. Drop its `.txt` source in `scripts/macros/`.
+2. `python3 scripts/compile_macro.py scripts/macros/`
+3. `python3 scripts/build_scripts_index.py`
+4. `pio run` — the new chip is automatically registered in
+   `firmware/include/scripts_index.inc` and the web picker picks it up
+   from `/api/scripts` on the next page load.
+
+No firmware C++ change is required. Audio-recognition scripts (which
+need a microphone path) are skipped; the firmware has no audio capture.
+
+The `compile_macro.py` skips anything it can't lower, with a printed
+warning. The DSL subset it covers and the skip list are documented in
+the script's top-of-file docstring.
 
 ## Serial protocol
 
-The control link is `115200 baud`, ASCII, one command per line.
+The control link is `115200 baud`, ASCII, one command per line. The same
+commands are also exposed over the WebSocket path; just prepend them
+to a `ws://splatoon.local/ws` text frame.
 
 | Command | Behavior |
 | --- | --- |
 | `HELLO` / `INFO` | Return firmware, routine metadata, and current state as JSON |
-| `START` | Restart the board-resident routine from step 1 |
-| `STOP` | Stop and send a fully neutral controller report |
 | `STATUS` | Return phase, step, cycle count, and timing |
 | `PING` | Return `PONG` |
-| `R buttons dpad lx ly rx ry` | Stop the routine and send one complete HID report |
+| `START` / `START_MATERIAL` / `START_DEFAULT` | Start `material-farm` (registry index 0) |
+| `START_APRICOT` / `START2` | Start `apricot-den` (registry index 1) |
+| `START_INKBACK` / `START3` | Start `apricot-den-inkback` (registry index 2) |
+| `START_IDX <n>` | Start the registry entry at index `n` (0 .. kCompiledScriptCount-1) |
+| `STOP` | Stop and send a fully neutral controller report |
+| `SCRIPT` | Return the name of the currently-running routine |
+| `SCRIPT_LIST` | Return the full registry as a `script_list` JSON frame |
+| `STREAM` | Stop both macro engines, prepare to forward raw `R ...` frames |
+| `STREAM_END` | Resume normal mode, emit a final neutral frame |
+| `R buttons dpad lx ly rx ry` | Send one complete HID report (only when `STREAM` is active) |
 
-The raw report command keeps the firmware useful for future computer-loaded
-routines without changing the board protocol.
+The HTTP `GET /api/scripts` endpoint returns the same registry as JSON
+(the page uses it on load). `GET /api/scripts/<key>` returns just the
+`MacroStep[]` for one entry; the editor's import button uses this to
+clone a firmware-resident script into the custom editor.
 
 ## Development
 
@@ -141,13 +221,27 @@ The test suite covers:
 - Status parsing and the simulated serial transport
 - All 14 button bits, cardinal/diagonal D-pad input, keyboard mapping, and
   multi-source press/release behavior
+- The 文字版代码 compiler: lexer, parser, IF/ELIF/ELSE/ENDIF constant
+  folding, FUNC/CALL inlining, FOR constant-count unrolling, parameter
+  folding, and the `scripts_index.inc` builder
 
 Project layout:
 
-- `firmware/include/MaterialFarmMacro.h` — board-resident routine
+- `firmware/include/MaterialFarmMacro.h` — board-resident hand-coded routine
+- `firmware/include/ApricotDenMacro.h` — board-resident hand-coded routine
+- `firmware/include/ApricotDenInkbackMacro.h` — board-resident hand-coded routine
+- `firmware/include/Script_*.h` — auto-generated by `compile_macro.py` from
+  `scripts/macros/*.txt`
+- `firmware/include/scripts_index.inc` — auto-generated by
+  `build_scripts_index.py`; the single registry `main.cpp` iterates
 - `firmware/src/MacroEngine.cpp` — non-blocking loop engine
 - `firmware/src/main.cpp` — USB HID, serial protocol, and device main loop
-- `web/` — dependency-free Web Serial console
+- `firmware/src/web_server.cpp` — captive portal, `/api/status`,
+  `/api/scripts`, `/api/scripts/<key>`, `/api/wifi`, `/api/reset`
+- `web/` — dependency-free browser console (Web Serial + WebSocket)
+- `scripts/compile_macro.py` — `.txt` → `Script_<hash>.h` lowerer
+- `scripts/build_scripts_index.py` — composes the registry
+- `scripts/macros/` — `.txt` sources for the user-compiled scripts
 - `tests/` — host-side firmware and browser-logic tests
 
 ## License and disclaimer
