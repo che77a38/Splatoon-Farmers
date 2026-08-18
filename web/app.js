@@ -110,6 +110,11 @@ const SCRIPTS = {
   },
 };
 const DEFAULT_SCRIPT_KEY = "material-farm";
+// KNOWN_SCRIPT_KEYS is rebuilt every time populateLiveScripts adds a new
+// entry — the static Set initialized at module load does NOT see the
+// runtime additions, and the chip click handler reads from this Set to
+// guard against typo'd data-script values. We keep the static entries
+// here and let `populateLiveScripts` push the live ones.
 const KNOWN_SCRIPT_KEYS = new Set(Object.keys(SCRIPTS));
 
 // The most recent firmware-resident script list, populated by SCRIPT_LIST
@@ -655,6 +660,9 @@ function populateLiveScripts(scripts) {
       stepCount: s.steps,
       cycleMs: s.cycle_ms,
     };
+    KNOWN_SCRIPT_KEYS.add(key);  // mirror runtime additions so chip clicks
+                                  // are accepted by the guard in the static
+                                  // click handler below.
     // Step summary: "X 步 · MM:SS.s"
     const cycleSeconds = Math.round(s.cycle_ms / 100) / 10;
     const minutes = Math.floor(cycleSeconds / 60);
