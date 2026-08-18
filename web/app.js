@@ -479,7 +479,14 @@ function applyDeviceMessage(message, { syncPicker = false } = {}) {
   deviceState = message.state === "running" ? "running" : "idle";
   devicePhase = message.phase || "idle";
   currentStep = Number(message.step) || 0;
-  stepCount = Number(message.steps) || stepCount;
+  // Only the running routine's step count describes the device's current
+  // progress. When the device is idle (or in a non-running phase that
+  // doesn't move the progress bar), keep the value the picker pre-selected
+  // so the UI keeps previewing the user's chosen script until they actually
+  // start it.
+  if (deviceState === "running") {
+    stepCount = Number(message.steps) || stepCount;
+  }
   elements.statusBadge.dataset.cycle = String(Number(message.cycle) || 0);
   // The device reports its running routine in `routine`. We track it as
   // `deviceRoutine` for the status copy and the gap-phase "prepare next ..."
