@@ -160,6 +160,16 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
     onRoot(req);
   });
 
+  // /api/scripts — JSON list of firmware-resident routines. Served over
+  // plain HTTP so the page can fetch it once at script load (no WebSocket
+  // race). The body builder lives in main.cpp so it tracks the same
+  // kCompiledScripts registry the WS SCRIPT_LIST command uses.
+  server_->on("/api/scripts", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    String body;
+    emitScriptListInto(body);
+    req->send(200, "application/json", body);
+  });
+
   // Root path: serve index.html as the default document. The per-asset
   // on() routes above handle subresources like /styles.css and /app.js.
   // In AP mode the user almost certainly wants the captive-portal

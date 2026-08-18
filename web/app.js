@@ -220,6 +220,11 @@ elements.durationText.textContent = formatDuration(SCRIPTS[selectedScript].cycle
 syncScriptChipUi();
 renderEditorCard();
 
+// Load the firmware-resident script list on page load. This is a
+// plain HTTP fetch (no WebSocket), so the chips appear as soon as the
+// server returns — no race with the WS handshake.
+fetchScriptsHttp();
+
 function setError(message = "") {
   elements.errorText.textContent = message;
   elements.errorText.hidden = !message;
@@ -392,11 +397,11 @@ function render() {
   // Picker is enabled as soon as we're connected. We deliberately let the user
   // switch scripts while a routine is running — pressing Start afterwards will
   // restart with the new script (the firmware stops the old engine first).
-  if (elements.scriptChips) {
-    for (const chip of elements.scriptChips) {
-      if (chip) chip.disabled = busy || !connected;
-    }
-  }
+  // Re-query the DOM so live chips added by populateLiveScripts (after
+  // SCRIPT_LIST arrives) are included in the disabled-state refresh.
+  document.querySelectorAll('.picker-chip').forEach((chip) => {
+    chip.disabled = busy || !connected;
+  });
   for (const button of manualButtons) {
     const pressed = activeManualControls.has(button.dataset.control);
     button.disabled = busy || !connected;
@@ -500,10 +505,11 @@ function applyDeviceMessage(message, { syncPicker = false } = {}) {
 }
 
 function onLine(line) {
-  // SCRIPT_LIST reply is consumed by fetchScriptList() and not forwarded
-  // into the regular device-state stream — its `state` / `phase` fields
-  // don't exist, so applyDeviceMessage would silently swallow it.
-  if (scriptListResolver && scriptListResolver(line)) {
+  // SCRIPT_LIST is delivered via HTTP /api/scripts on page load (see
+  // fetchScriptsHttp). The legacy WS SCRIPT_LIST path is kept off so
+  // the picker isn't raced by an out-of-order reply. Future revisions
+  // can re-introduce a resolver here if the HTTP route is removed.
+  if (line.startsWith('{"type":"script_list"')) {
     return;
   }
   const syncPicker = pendingHelloSync;
@@ -574,7 +580,7 @@ async function connect() {
     // promise that onLine fulfills when it sees a script_list frame. We
     // send the request *after* HELLO so the firmware's per-line parsing
     // never interleaves with our "expect one script_list" handshake.
-    fetchScriptList().catch(() => {});
+    fetchScriptList();  // no-op now; HTTP /api/scripts is the source of truth
   } catch (error) {
     connected = false;
     transport = null;
@@ -585,41 +591,38 @@ async function connect() {
   }
 }
 
-// One-shot resolver for the SCRIPT_LIST reply. onLine fulfills it when a
-// `script_list` frame arrives; any other line is the regular STATUS flow.
-let scriptListResolver = null;
-function fetchScriptList() {
-  return new Promise((resolve, reject) => {
-    if (!transport) return reject(new Error("not connected"));
-    scriptListResolver = (payload) => {
-      scriptListResolver = null;
-      try {
-        const parsed = JSON.parse(payload);
-        if (parsed && parsed.type === "script_list" && Array.isArray(parsed.scripts)) {
-          populateLiveScripts(parsed.scripts);
-          resolve(parsed);
-          return true;
-        }
-      } catch (_) { /* fall through to keep waiting */ }
-      return false;
-    };
-    const timer = window.setTimeout(() => {
-      if (scriptListResolver) {
-        scriptListResolver = null;
-        reject(new Error("SCRIPT_LIST timeout"));
-      }
-    }, 4000);
-    const orig = scriptListResolver;
-    scriptListResolver = (payload) => {
-      window.clearTimeout(timer);
-      return orig(payload);
-    };
-    transport.send("SCRIPT_LIST").catch((err) => {
-      scriptListResolver = null;
-      window.clearTimeout(timer);
-      reject(err);
-    });
-  });
+// Fetch the firmware-resident script list **once on page load** via the
+// plain HTTP /api/scripts endpoint. This avoids the WS-roundtrip race
+// that bit the previous SCRIPT_LIST-via-WebSocket implementation:
+// the response used to land before the resolver had been installed and
+// the chip list silently never populated. The HTTP path is a single
+// fetch at startup, so the chips appear regardless of WS state.
+async function fetchScriptsHttp() {
+  try {
+    const res = await fetch("/api/scripts", { cache: "no-store" });
+    if (!res.ok) {
+      console.warn('[script-list] /api/scripts HTTP', res.status);
+      return;
+    }
+    const data = await res.json();
+    if (data && Array.isArray(data.scripts)) {
+      populateLiveScripts(data.scripts);
+    }
+  } catch (e) {
+    console.warn('[script-list] /api/scripts fetch failed:', e.message);
+  }
+}
+
+// Fallback for when the WS path is healthier than HTTP (e.g. captive
+// portal mode where the user lands on /provision and HTTP routes are
+// limited). Kept as a non-blocking nicety; the HTTP fetch is the source
+// of truth.
+async function fetchScriptList() {
+  if (!transport || !transport.connected) return;
+  // The HTTP /api/scripts fetch on page load already populated the
+  // picker. The WS path is intentionally a no-op here so we don't race
+  // with the HTTP response. Kept as a stub for forward compatibility.
+  void 0;
 }
 
 // Take the parsed script_list payload and merge the firmware-supplied
@@ -629,9 +632,14 @@ function fetchScriptList() {
 // picker data-script attributes that follow HTML naming conventions).
 function populateLiveScripts(scripts) {
   liveScripts = scripts;
+  console.info('[script-list] firmware-resident routines:', scripts.length,
+              scripts.map(s => `${s.index}=${s.label}`).join(', '));
   const customChip = elements.scriptChips?.find((c) => c?.dataset.script === "custom");
   const host = customChip?.parentElement;
-  if (!host) return;
+  if (!host) {
+    console.warn('[script-list] no picker DOM host for live chips');
+    return;
+  }
   // Drop any previously injected live chips so a reconnect rebuilds cleanly.
   for (const el of Array.from(host.querySelectorAll(".picker-chip--live"))) {
     el.remove();

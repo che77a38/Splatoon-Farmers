@@ -10,6 +10,13 @@
 
 namespace farmers {
 
+// External hook so the web server can reuse the same JSON builder as the
+// WS path emits via SCRIPT_LIST (avoids the WS one-shot race that ships
+// the response before the resolver has been installed). Implementation
+// lives in main.cpp alongside the g_script_index / kCompiledScripts
+// registry so the script list stays in sync with the macro selection.
+void emitScriptListInto(String& out);
+
 // One line of WS reply text. The ctx is whatever the dispatcher
 // registered with setWsCommandHandler() — typically the originating
 // AsyncWebSocketClient pointer so replies go back to the same peer.

@@ -41,6 +41,36 @@ NSGamepad Gamepad;
 // ---------------------------------------------------------------------------
 typedef void (*LineReplyFn)(const char* line, void* ctx);
 
+namespace farmers {
+// External hook so the web_server.h HTTP layer can reuse the same JSON
+// builder for the /api/scripts endpoint (avoids the WS path's race).
+// Lives at the outer namespace level so the rest of main.cpp's anonymous
+// namespace can keep writing `farmers::` for the same constants without
+// colliding with a nested re-opening.
+void emitScriptListInto(String& out) {
+  out.reserve(64 + 96 * kCompiledScriptCount);
+  out += "{\"type\":\"script_list\",\"ok\":true,\"scripts\":[";
+  for (size_t i = 0; i < kCompiledScriptCount; ++i) {
+    const auto& s = kCompiledScripts[i];
+    if (i > 0) out += ',';
+    out += "{\"index\":";
+    out += String((unsigned)i);
+    out += ",\"key\":\"";
+    out += s.key;
+    out += "\",\"label\":\"";
+    out += s.label;
+    out += "\",\"description\":\"";
+    out += s.description;
+    out += "\",\"steps\":";
+    out += String((unsigned)s.step_count);
+    out += ",\"cycle_ms\":";
+    out += String((unsigned)s.cycle_ms);
+    out += '}';
+  }
+  out += "]}";
+}
+}  // namespace farmers
+
 namespace {
 
 // Forward decls. These sit inside the anonymous namespace because they
