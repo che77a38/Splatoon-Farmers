@@ -1411,6 +1411,15 @@ footer {
 
 .editor-card {
   margin-top: 18px;
+  /* The control-card mixin applies a diagonal clip-path + overflow: hidden
+     to keep the corner cuts. Both silently clip the + Add step dropdown
+     panel that overflows below the menu button. The editor card doesn't
+     need either — the diagonal corners are decorative, and the panel
+     must escape the card to overlay other cards (control-card in
+     particular has z-index 2 and would otherwise sit on top). */
+  overflow: visible;
+  clip-path: none;
+  border-radius: 12px;
 }
 
 .editor-card[hidden] {
@@ -1458,10 +1467,14 @@ footer {
 }
 
 .editor-add-panel {
+  /* High enough to overlay any other card on the page (control-card
+     has z-index 2 in the global stacking context; the editor-card
+     used to clip its descendant panel, so an extra-large value here is
+     cheap insurance against layout-level stacking surprises). */
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 11;
+  z-index: 1000;
   min-width: 220px;
   max-height: 360px;
   overflow-y: auto;
