@@ -1466,12 +1466,13 @@ footer {
 }
 
 .editor-add-panel {
-  /* High enough to overlay any other card on the page (control-card
-     has z-index 2 in the global stacking context; the editor-card
-     used to clip its descendant panel, so an extra-large value here is
-     cheap insurance against layout-level stacking surprises). */
-  position: absolute;
-  top: calc(100% + 6px);
+  /* Use position: fixed so the panel escapes every local stacking
+     context (the editor-card, hero, footer, wiring section all have
+     their own z-index that would otherwise pin the panel below them).
+     Position is computed by JS on the menu's toggle event using the
+     summary button's bounding rect. */
+  position: fixed;
+  top: 0;
   left: 0;
   z-index: 1000;
   min-width: 220px;

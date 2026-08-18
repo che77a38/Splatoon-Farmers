@@ -1084,6 +1084,27 @@ if (elements.editorAddMenu && elements.editorAddLists.length) {
       elements.editorAddMenu.removeAttribute("open");
     }
   });
+  // The panel uses position: fixed (so it escapes every local stacking
+  // context). Reposition it on every toggle + scroll + resize so the
+  // dropdown keeps tracking the summary button even when the page
+  // scrolls or the window changes size. Clamp to the viewport so the
+  // panel doesn't overflow the bottom of the screen.
+  const repositionPanel = () => {
+    if (!elements.editorAddMenu.open) return;
+    const panel = elements.editorAddMenu.querySelector(".editor-add-panel");
+    if (!panel) return;
+    const summary = elements.editorAddMenu.querySelector(".editor-add-summary");
+    if (!summary) return;
+    const rect = summary.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const top = Math.min(rect.bottom + 6, window.innerHeight - panelRect.height - 8);
+    const left = Math.min(rect.left, window.innerWidth - panelRect.width - 8);
+    panel.style.top = `${Math.max(8, top)}px`;
+    panel.style.left = `${Math.max(8, left)}px`;
+  };
+  elements.editorAddMenu.addEventListener("toggle", repositionPanel);
+  window.addEventListener("resize", repositionPanel);
+  window.addEventListener("scroll", repositionPanel, true);
 }
 
 render();
