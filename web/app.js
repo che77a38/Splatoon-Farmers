@@ -57,6 +57,8 @@ const elements = {
   editorExportButton: document.querySelector('[data-testid="editor-export"]'),
   editorImportButton: document.querySelector('[data-testid="editor-import"]'),
   editorImportInput: document.querySelector('[data-testid="editor-import-input"]'),
+  editorImportMenu: document.querySelector('[data-testid="editor-import-menu"]'),
+  editorImportList: document.querySelector('[data-testid="editor-import-list"]'),
   editorAddMenu: document.querySelector('[data-testid="editor-add-menu"]'),
   editorAddLists: document.querySelectorAll('.editor-add-list[data-template-group]'),
   editorSteps: document.querySelector('[data-testid="editor-steps"]'),
@@ -652,6 +654,7 @@ function populateLiveScripts(scripts) {
     console.warn('[script-list] no picker DOM host for live chips');
     return;
   }
+  populateImportMenu(scripts);
   // Drop any previously injected live chips so a reconnect rebuilds cleanly.
   for (const el of Array.from(host.querySelectorAll(".picker-chip--live"))) {
     el.remove();
@@ -721,6 +724,86 @@ async function disconnect() {
     transport = null;
     busy = false;
     render();
+  }
+}
+
+// Populate the editor's "📋 导入固件脚本" menu with one button per
+// firmware-resident routine. The buttons fetch /api/scripts/<key>,
+// convert the per-step JSON into the editor's internal format, and
+// load the result into customScript. Persistent to localStorage as
+// usual; the user can then edit, re-record over, or run as the
+// "custom" chip.
+function populateImportMenu(scripts) {
+  const list = elements.editorImportList;
+  if (!list) return;
+  list.replaceChildren();
+  for (const s of scripts) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "editor-add-item";
+    btn.dataset.scriptKey = s.key;
+    btn.dataset.testid = `editor-import-${s.index}`;
+    btn.disabled = !connected;
+    const cycleSeconds = Math.round(s.cycle_ms / 100) / 10;
+    const minutes = Math.floor(cycleSeconds / 60);
+    const seconds = (cycleSeconds - minutes * 60).toFixed(1).padStart(4, "0");
+    const summary = `${s.steps} 步 · ${minutes}:${seconds.padStart(2, "0")}`;
+    btn.innerHTML = `<strong>${s.label}</strong><small>${summary}</small>`;
+    btn.title = s.description || s.label;
+    btn.addEventListener("click", () => importFirmwareScript(s.key, s.label));
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+// Fetch the steps for one firmware-resident script and load them into
+// customScript. The firmware returns a flat array of
+// {durationMs, buttons, dpad, sticks:[lx,ly,rx,ry]}; the editor stores
+// the same shape but as {type: 'hold'|'release', durationMs, ...}. We
+// collapse any fully-neutral frame into a 'release' so the editor
+// doesn't render a thousand "neutral" rows.
+async function importFirmwareScript(key, label) {
+  try {
+    setError();
+    const res = await fetch(`/api/scripts/${encodeURIComponent(key)}`,
+      { cache: "no-store" });
+    if (!res.ok) {
+      setError(`导入失败: HTTP ${res.status}`);
+      return;
+    }
+    const steps = await res.json();
+    if (!Array.isArray(steps)) {
+      setError("导入失败: 返回不是数组");
+      return;
+    }
+    const converted = steps.map((raw) => {
+      const sticks = Array.isArray(raw.sticks) && raw.sticks.length === 4
+        ? raw.sticks.map((v) => Math.max(0, Math.min(255, v | 0)))
+        : [128, 128, 128, 128];
+      const buttons = Number(raw.buttons) || 0;
+      const dpad = Number.isFinite(Number(raw.dpad))
+        ? (Number(raw.dpad) | 0)
+        : 15;
+      const durationMs = Math.max(1, Number(raw.durationMs) || 1);
+      const isNeutral = buttons === 0 && dpad === 15 &&
+        sticks.every((v) => v === 128);
+      return isNeutral
+        ? { type: "release", durationMs, buttons: 0, dpad: 15, sticks }
+        : { type: "hold", durationMs, buttons, dpad, sticks };
+    });
+    customScript.steps = converted;
+    customScript.repeat = false;
+    customScript.name = `${label} (副本)`;
+    selectedScript = "custom";
+    elements.editorAddMenu?.removeAttribute("open");
+    elements.editorImportMenu?.removeAttribute("open");
+    syncScriptChipUi();
+    renderEditorCard();
+    scheduleAutoSave();
+    setError();
+  } catch (e) {
+    setError(`导入失败: ${e.message}`);
   }
 }
 

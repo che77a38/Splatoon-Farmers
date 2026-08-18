@@ -160,11 +160,27 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
     onRoot(req);
   });
 
-  // /api/scripts — JSON list of firmware-resident routines. Served over
-  // plain HTTP so the page can fetch it once at script load (no WebSocket
-  // race). The body builder lives in main.cpp so it tracks the same
-  // kCompiledScripts registry the WS SCRIPT_LIST command uses.
+  // /api/scripts — two paths share this prefix:
+  //   1. GET /api/scripts                → JSON list of resident routines
+  //   2. GET /api/scripts/<key>          → JSON array of MacroStep for one
+  // AsyncWebServer's on() treats trailing-path requests as part of the
+  // same handler, so we branch on URL length here rather than registering
+  // a second route.
   server_->on("/api/scripts", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    const String& url = req->url();
+    const char* prefix = "/api/scripts/";
+    const size_t prefixLen = strlen(prefix);
+    if (url.length() > prefixLen && url.startsWith(prefix)) {
+      const char* key = url.c_str() + prefixLen;
+      String body;
+      if (!emitScriptStepsJson(key, body)) {
+        req->send(404, "application/json",
+                  "{\"ok\":false,\"error\":\"not_found\"}");
+        return;
+      }
+      req->send(200, "application/json", body);
+      return;
+    }
     String body;
     emitScriptListInto(body);
     req->send(200, "application/json", body);

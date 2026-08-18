@@ -226,6 +226,19 @@
         </div>
 
         <div class="editor-toolbar" role="group" aria-label="编辑器工具栏">
+          <details class="editor-import-menu" data-testid="editor-import-menu">
+            <summary
+              class="button button-secondary editor-import-summary"
+              data-testid="editor-import-firmware"
+              aria-label="从固件导入脚本"
+            >
+              📋 导入固件脚本
+            </summary>
+            <div class="editor-add-panel" role="menu">
+              <p class="picker-label">选择要复制到编辑器的脚本</p>
+              <ul class="editor-import-list" data-testid="editor-import-list"></ul>
+            </div>
+          </details>
           <details class="editor-add-menu" data-testid="editor-add-menu">
             <summary
               class="button button-primary editor-add-summary"

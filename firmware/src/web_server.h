@@ -17,6 +17,12 @@ namespace farmers {
 // registry so the script list stays in sync with the macro selection.
 void emitScriptListInto(String& out);
 
+// Per-script step JSON: serialise the MacroStep[] for a single
+// registered script (matched by `key`) onto a String. Returns false if
+// the key is not in kCompiledScripts, true on success. Used by the web
+// editor's "import firmware script" feature.
+bool emitScriptStepsJson(const char* key, String& out);
+
 // One line of WS reply text. The ctx is whatever the dispatcher
 // registered with setWsCommandHandler() — typically the originating
 // AsyncWebSocketClient pointer so replies go back to the same peer.

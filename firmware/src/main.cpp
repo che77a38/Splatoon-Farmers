@@ -41,7 +41,54 @@ NSGamepad Gamepad;
 // ---------------------------------------------------------------------------
 typedef void (*LineReplyFn)(const char* line, void* ctx);
 
+// Build the per-step JSON for one MacroStep entry, used by the
+// /api/scripts/<key> HTTP route so the web UI can clone a firmware-
+// resident routine into the custom editor. The shape is a flat
+// record (not the editor's nested {type, sticks: [...]} form) so the
+// web side has the simplest possible transformation.
+static void emitStepJson(String& out, const farmers::MacroStep& step) {
+  out += "{\"durationMs\":";
+  out += String((unsigned long)step.durationMs);
+  out += ",\"buttons\":";
+  out += String((unsigned long)step.report.buttons);
+  out += ",\"dpad\":";
+  out += String((unsigned int)step.report.dpad);
+  out += ",\"sticks\":[";
+  out += String((unsigned int)step.report.leftX); out += ',';
+  out += String((unsigned int)step.report.leftY); out += ',';
+  out += String((unsigned int)step.report.rightX); out += ',';
+  out += String((unsigned int)step.report.rightY);
+  out += "]}";
+}
+
 namespace farmers {
+
+// Public hook: serialise a single registered script's MacroStep[]
+// into a JSON array on the supplied String. The string starts at the
+// opening '[' and ends at the closing ']'. Returns false if the key
+// is not in kCompiledScripts, true on success. The web editor's
+// "import firmware script" feature uses this so any of the 10
+// resident scripts can be cloned into customScript for editing.
+bool emitScriptStepsJson(const char* key, String& out) {
+  if (!key) return false;
+  for (size_t i = 0; i < kCompiledScriptCount; ++i) {
+    if (strcmp(kCompiledScripts[i].key, key) != 0) continue;
+    const auto& s = kCompiledScripts[i];
+    out += '[';
+    for (size_t j = 0; j < s.step_count; ++j) {
+      if (j > 0) out += ',';
+      emitStepJson(out, s.steps[j]);
+    }
+    out += ']';
+    return true;
+  }
+  return false;
+}
+
+}  // namespace farmers
+
+namespace farmers {
+
 // External hook so the web_server.h HTTP layer can reuse the same JSON
 // builder for the /api/scripts endpoint (avoids the WS path's race).
 // Lives at the outer namespace level so the rest of main.cpp's anonymous
@@ -69,6 +116,7 @@ void emitScriptListInto(String& out) {
   }
   out += "]}";
 }
+
 }  // namespace farmers
 
 namespace {
