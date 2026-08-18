@@ -1453,6 +1453,28 @@ footer {
   z-index: 10;
 }
 
+// The "📋 导入固件脚本" menu reuses the same portal-rendered panel
+// pattern as editor-add-menu, but the summary button uses a different
+// visual treatment (secondary button) and a separate [open] z-index
+// so the two menus' open states don't fight each other.
+.editor-import-menu {
+  position: relative;
+}
+
+.editor-import-menu[open] {
+  z-index: 9;
+}
+
+.editor-import-summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.editor-import-summary::-webkit-details-marker {
+  display: none;
+}
+
 .editor-add-summary {
   display: inline-flex;
   align-items: center;
