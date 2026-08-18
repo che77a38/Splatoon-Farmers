@@ -10,6 +10,24 @@
 
 namespace farmers {
 
+// One line of WS reply text. The ctx is whatever the dispatcher
+// registered with setWsCommandHandler() — typically the originating
+// AsyncWebSocketClient pointer so replies go back to the same peer.
+typedef void (*WsReplyFn)(const char* line, void* ctx);
+
+// Dispatch a single text frame received on the /ws endpoint. The
+// dispatcher (lives in main.cpp alongside the macro engines and the
+// streamMode flag) parses the command, mutates firmware state, and
+// replies via `reply(line)` for each response line — at minimum one
+// of OK / ERR / a JSON payload. The replyCtx is whatever the caller
+// wants to thread through — typically the originating
+// AsyncWebSocketClient pointer so replies go back to the same peer —
+// but the dispatcher treats it as opaque and never inspects it.
+// Returns nothing; the dispatcher must send at least one reply before
+// returning so the browser never hangs waiting on /ws.
+typedef void (*WsCommandHandler)(const char* line,
+                                 WsReplyFn reply, void* replyCtx);
+
 // Captive portal + provisioning endpoints served by AsyncWebServer. Owns
 // no transport state — the WiFi manager already runs the radio; this
 // class just adds the user-facing HTTP surface on top.
@@ -34,6 +52,14 @@ class WebServer {
 
   bool isActive() const { return server_ != nullptr; }
 
+  // Wire the WS command dispatcher. The handler owns all command parsing
+  // and reply logic so the protocol surface is shared between the
+  // serial path and the WiFi transport without duplicating the
+  // command table. Call once from setup() before web traffic starts.
+  void setWsCommandHandler(WsCommandHandler handler) {
+    wsCommandHandler_ = handler;
+  }
+
  private:
   // GET handlers
   void onRoot(AsyncWebServerRequest* req);
@@ -52,19 +78,16 @@ class WebServer {
   void startDns();
   void stopDns();
 
-  // WebSocket endpoint at /ws. This commit only handles the minimum
-  // needed for a smoke test: each text frame is treated as a raw
-  // HID report ("R buttons dpad lx ly rx ry") and forwarded to the
-  // gamepad. The server replies "OK" on success or "ERR" on parse
-  // failure, mirroring the serial protocol's R-handler response. The
-  // full command dispatcher (STATUS, START*, STOP, SCRIPT) lands in
-  // commit 7 alongside the browser-side http-transport, which keeps
-  // this commit's surface small enough to avoid the
-  // anonymous-namespace boundary issues the protocol-forwarder
-  // approach ran into.
+  // WebSocket endpoint at /ws. Text frames are forwarded to the
+  // dispatcher registered with setWsCommandHandler(); the dispatcher
+  // is the single source of truth for the protocol surface and is
+  // shared with the serial path. If no dispatcher is registered
+  // (e.g. before setup() finishes wiring it), frames fall through to
+  // a raw 6-tuple HID report parser so a 6-tuple frame still pushes
+  // Gamepad.write().
   void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                  AwsEventType type, void* arg, uint8_t* data, size_t len);
-  void wsRawReport(AsyncWebSocketClient* client, const String& line);
+  void wsRawReportFallback(AsyncWebSocketClient* client, const String& line);
   static void replyTo(AsyncWebSocketClient* client, const char* line);
 
   ConfigStore* config_ = nullptr;
@@ -76,6 +99,10 @@ class WebServer {
   // is pending. Reset at boot by reading the counter.
   bool restart_pending_ = false;
   uint32_t restart_at_ms_ = 0;
+  // Dispatcher invoked for every WS text frame. Owned by main.cpp so
+  // the handler can mutate the macro engines / streamMode flag without
+  // exposing them through this header.
+  WsCommandHandler wsCommandHandler_ = nullptr;
 };
 
 }  // namespace farmers

@@ -77,6 +77,7 @@ void WebServer::begin(ConfigStore* config, WifiManager* wifi) {
       "manual-input.js",
       "protocol.js",
       "serial-transport.js",
+      "http-transport.js",
       "provision.html",
   };
   for (const char* name : kStaticFiles) {
@@ -345,24 +346,28 @@ void WebServer::onCaptiveRedirect(AsyncWebServerRequest* req) {
 
 // --- WebSocket protocol surface ---------------------------------------------
 //
-// We only handle the bare minimum for an end-to-end smoke test here:
-// each text frame is parsed as if it were a raw HID report frame
-// ("R buttons dpad lx ly rx ry"). The full command dispatcher
-// (HELLO, STATUS, START*, STOP, STREAM, SCRIPT) lands in commit 7
-// alongside the browser-side http-transport.js, which knows how to
-// dispatch the full protocol against the existing serial paths.
+// Production traffic goes through the dispatcher installed by
+// main.cpp via setWsCommandHandler(). The dispatcher owns the full
+// protocol surface (HELLO, INFO, STATUS, PING, STOP, STREAM,
+// STREAM_END, START*, SCRIPT, R frames) so the serial path and the
+// /ws path stay byte-compatible.
+//
+// wsRawReportFallback() below is the legacy parser from the original
+// end-to-end smoke test; it stays so a freshly-flashed board accepts
+// R frames even if the dispatcher has not been wired yet (e.g. while
+// a debug session is iterating on web_server.cpp alone).
 
 namespace {
 
-// Clamp a numeric field into the Switch / switch_ESP32 valid range.
-// 0..255 covers all four axes; 0..15 covers dpad (NSGAMEPAD_DPAD_*).
-unsigned long clampU8(unsigned long v) {
-  return v > 255 ? 255 : v;
-}
-unsigned long clampDpad(unsigned long v) {
-  // Reject anything outside the hat-switch range and fall back to
-  // centered, mirroring the firmware's normalizeDpad() behaviour.
-  return (v == 15 || v <= 7) ? v : 15;
+// Forward one reply line back to the originating WS client. The
+// context is the AsyncWebSocketClient* that called the dispatcher;
+// null-safe (the dispatcher may pass nullptr if it has nothing to say,
+// in which case we just drop the line).
+void wsForwardReply(const char* line, void* ctx) {
+  auto* client = static_cast<AsyncWebSocketClient*>(ctx);
+  if (client && line) {
+    client->text(line);
+  }
 }
 
 }  // namespace
@@ -371,7 +376,7 @@ void WebServer::replyTo(AsyncWebSocketClient* client, const char* line) {
   if (line) client->text(line);
 }
 
-void WebServer::wsRawReport(AsyncWebSocketClient* client, const String& line) {
+void WebServer::wsRawReportFallback(AsyncWebSocketClient* client, const String& line) {
   // Parse "<buttons> <dpad> <lx> <ly> <rx> <ry>" into unsigned longs.
   // sscanf's %lu is permissive about whitespace, which is what we
   // want here — the serial path uses the same parser.
@@ -424,9 +429,24 @@ void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
   for (size_t i = 0; i < len; ++i) line += (char)data[i];
   line.trim();
   if (line.isEmpty()) return;
-  // For now every command is forwarded to the R-frame handler. The
-  // full command dispatcher is added in commit 7.
-  wsRawReport(client, line);
+  // Production path: forward the trimmed line to the dispatcher
+  // installed in setup(). It will route replies back to the same
+  // client via wsForwardReply, with the client pointer passed as
+  // replyCtx so the dispatcher can treat it as opaque.
+  if (wsCommandHandler_) {
+    char buf[128];
+    const size_t cap = sizeof(buf) - 1;
+    const size_t copy = line.length() < cap ? line.length() : cap;
+    memcpy(buf, line.c_str(), copy);
+    buf[copy] = '\0';
+    wsCommandHandler_(buf, &wsForwardReply, client);
+    return;
+  }
+  // Fallback for an unwired server (the dispatcher is set in setup()
+  // before the AsyncWebServer is reachable from outside, so this
+  // branch should never run on a normally-booted device, but it
+  // keeps the WS endpoint responsive during early bring-up).
+  wsRawReportFallback(client, line);
 }
 
 }  // namespace farmers

@@ -31,7 +31,26 @@ NSGamepad Gamepad;
 #define ATT_CONTROL_SERIAL Serial
 #endif
 
+// ---------------------------------------------------------------------------
+// Protocol dispatcher — shared by the Serial (CH340) path and the WiFi /ws
+// path. The reply sink is a callback so the same command parser serves both
+// transports: a Serial call routes replies back through HardwareSerial, while
+// a WS call routes them through client->text(). Without this refactor every
+// command would be implemented twice and the two paths would drift.
+// ---------------------------------------------------------------------------
+typedef void (*LineReplyFn)(const char* line, void* ctx);
+
 namespace {
+
+// Forward decls. These sit inside the anonymous namespace because they
+// touch state owned below (the macro engines, streamMode flag, the
+// selected ActiveScript). The function bodies appear after the
+// anonymous namespace ends so they can reach main.cpp's top-level
+// emitState / handleLine plumbing.
+static void replySerial(const char* line, void* ctx);
+static void emitStateImpl(const char* type, LineReplyFn reply, void* ctx);
+static void handleLineImpl(char* line, LineReplyFn reply, void* ctx);
+static void handleLine(char* line);
 
 constexpr uint32_t kControlBaudRate = 115200;
 constexpr char kFirmwareVersion[] = "SplatoonFarmers/1.0.0";
@@ -162,12 +181,18 @@ ScriptMeta activeMeta() {
           farmers::kMaterialFarmCycleMs};
 }
 
-void emitState(const char* type) {
+void emitStateImpl(const char* type, LineReplyFn reply, void* ctx) {
   farmers::MacroEngine& macro = activeMacro();
   const ScriptMeta meta = activeMeta();
   const size_t visibleStep =
       macro.phase() == farmers::MacroPhase::kSteps ? macro.stepIndex() + 1 : 0;
-  ATT_CONTROL_SERIAL.printf(
+  // Format into a stack buffer so the same JSON can travel over either
+  // HardwareSerial (Serial path) or AsyncWebSocketClient::text (WS
+  // path) through the unified reply callback. 384 bytes is well above
+  // the worst-case output (~290 chars with full field counts).
+  char buf[384];
+  const int n = snprintf(
+      buf, sizeof(buf),
       "{\"type\":\"%s\",\"ok\":true,\"firmware\":\"%s\","
       "\"routine\":\"%s\",\"embedded\":true,\"state\":\"%s\","
       "\"phase\":\"%s\",\"step\":%u,\"steps\":%u,\"cycle\":%lu,"
@@ -180,6 +205,22 @@ void emitState(const char* type) {
       static_cast<unsigned long>(meta.durationMs),
       static_cast<unsigned long>(meta.loopGapMs),
       static_cast<unsigned long>(meta.cycleMs));
+  if (n > 0 && reply) reply(buf, ctx);
+}
+
+// Reply sink used by the Serial (CH340) path. Routes one JSON line to
+// HardwareSerial and ignores the ctx slot the WS path uses for the
+// AsyncWebSocketClient pointer.
+static void replySerial(const char* line, void* ctx) {
+  (void)ctx;
+  ATT_CONTROL_SERIAL.println(line);
+}
+
+// Legacy Serial-only wrapper around emitStateImpl. Kept so the few
+// callers that don't go through handleLineImpl (none today, but
+// reserved for future ad-hoc debug probes) still have a one-arg form.
+static void emitState(const char* type) {
+  emitStateImpl(type, &replySerial, nullptr);
 }
 
 void flushMacroReport() {
@@ -199,23 +240,23 @@ void stopAllMacros() {
   flushMacroReport();
 }
 
-void handleLine(char* line) {
+void handleLineImpl(char* line, LineReplyFn reply, void* ctx) {
   Serial.printf("[用户] 命令: %s\n", line);
   if (strcmp(line, "PING") == 0) {
-    ATT_CONTROL_SERIAL.println("PONG");
+    reply("PONG", ctx);
     return;
   }
   if (strcmp(line, "HELLO") == 0 || strcmp(line, "INFO") == 0) {
-    emitState("info");
+    emitStateImpl("info", reply, ctx);
     return;
   }
   if (strcmp(line, "STATUS") == 0) {
-    emitState("status");
+    emitStateImpl("status", reply, ctx);
     return;
   }
   if (strcmp(line, "STOP") == 0) {
     stopAllMacros();
-    emitState("status");
+    emitStateImpl("status", reply, ctx);
     return;
   }
   // Stream mode: stop every macro engine and let the host drive raw `R ...`
@@ -224,13 +265,13 @@ void handleLine(char* line) {
   if (strcmp(line, "STREAM") == 0) {
     stopAllMacros();
     streamMode = true;
-    ATT_CONTROL_SERIAL.println("OK");
+    reply("OK", ctx);
     return;
   }
   if (strcmp(line, "STREAM_END") == 0) {
     streamMode = false;
     applyReport(farmers::kNeutralReport);
-    ATT_CONTROL_SERIAL.println("OK");
+    reply("OK", ctx);
     return;
   }
   // Script selection. START / START_MATERIAL = material-farm (default);
@@ -245,7 +286,7 @@ void handleLine(char* line) {
     farmers::MacroEngine& macro = activeMacro();
     macro.start(millis());
     flushMacroReport();
-    emitState("status");
+    emitStateImpl("status", reply, ctx);
     return;
   }
   if (strcmp(line, "START_APRICOT") == 0 ||
@@ -255,7 +296,7 @@ void handleLine(char* line) {
     farmers::MacroEngine& macro = activeMacro();
     macro.start(millis());
     flushMacroReport();
-    emitState("status");
+    emitStateImpl("status", reply, ctx);
     return;
   }
   if (strcmp(line, "START_INKBACK") == 0 ||
@@ -265,11 +306,13 @@ void handleLine(char* line) {
     farmers::MacroEngine& macro = activeMacro();
     macro.start(millis());
     flushMacroReport();
-    emitState("status");
+    emitStateImpl("status", reply, ctx);
     return;
   }
   if (strcmp(line, "SCRIPT") == 0) {
-    ATT_CONTROL_SERIAL.printf("{\"script\":\"%s\"}\n", activeScriptName());
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"script\":\"%s\"}\n", activeScriptName());
+    reply(buf, ctx);
     return;
   }
 
@@ -298,11 +341,17 @@ void handleLine(char* line) {
       activeMacro().consumeReportChanged();
     }
     applyRawReport(buttons, dpad, leftX, leftY, rightX, rightY);
-    ATT_CONTROL_SERIAL.println("OK");
+    reply("OK", ctx);
     return;
   }
 
-  ATT_CONTROL_SERIAL.println("ERR");
+  reply("ERR", ctx);
+}
+
+// Serial-path wrapper. The CH340 bridge delivers one ASCII line at a
+// time via LineBuffer; replies ride HardwareSerial.
+void handleLine(char* line) {
+  handleLineImpl(line, &replySerial, nullptr);
 }
 
 void readControlSerial() {
@@ -595,6 +644,32 @@ void autoStartFromBoot() {
 // waitForBootHold landed; the new primitive lives in the anonymous
 // namespace above and is what autoStartFromBoot calls.)
 
+// WiFi /ws entry point. Copies the text frame into a stack buffer
+// (handleLineImpl mutates it via sscanf / strcmp), then dispatches to
+// the same command parser the Serial path uses. Lives at file scope
+// because Http.setWsCommandHandler needs an addressable function
+// with external linkage. replyCtx is whatever web_server.cpp threaded
+// through (the originating AsyncWebSocketClient pointer); we treat it
+// as opaque and just forward it to the parser, which passes it to
+// the reply sink unchanged.
+void onWsCommand(const char* line, farmers::WsReplyFn reply,
+                  void* replyCtx) {
+  // 128-byte buffer matches Serial's LineBuffer. Anything longer
+  // gets truncated; the longest legitimate command is START_INKBACK
+  // (12 bytes) — 128 leaves plenty of headroom for ad-hoc debug
+  // probes without changing the wire format.
+  char buf[128];
+  size_t copy = 0;
+  if (line) {
+    while (line[copy] && copy < sizeof(buf) - 1) ++copy;
+    memcpy(buf, line, copy);
+    buf[copy] = '\0';
+  } else {
+    buf[0] = '\0';
+  }
+  handleLineImpl(buf, reply, replyCtx);
+}
+
 void setup() {
   // Open the control serial first so the WiFi banner is visible.
   ATT_CONTROL_SERIAL.begin(kControlBaudRate);
@@ -620,6 +695,10 @@ void setup() {
   Serial.println("[boot] 配置存储就绪");
   Wifi.begin(&Config);
   Http.begin(&Config, &Wifi);
+  // Wire the /ws protocol dispatcher once begin() has registered the
+  // WS handler. Until this fires, /ws only handles raw R frames via
+  // the wsRawReportFallback path inside web_server.cpp.
+  Http.setWsCommandHandler(&onWsCommand);
   Serial.printf("[WiFi] mode=%s, status=%s, ip=%s, ap_ssid=%s, mdns=%s.local\n",
                 Wifi.mode() == farmers::WifiMode::kSta       ? "sta" :
                 Wifi.mode() == farmers::WifiMode::kStaConnecting ? "sta-connecting" : "ap",
