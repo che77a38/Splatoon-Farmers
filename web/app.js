@@ -975,12 +975,22 @@ async function playCustomScript() {
         devicePhase = "steps";
         deviceRoutine = "custom";
         deviceCurrentStep = stepIndex;
+        // Drive the top-of-page progress bar so users see the same
+        // step the editor highlights. The firmware STATUS path
+        // overwrites these; for the custom chip we own them.
+        currentStep = finished ? 0 : stepIndex + 1;
+        stepCount = totalSteps;
         renderEditorCard();
+        render();
       },
     });
   }
   setError();
-  await streamRunner.play();
+  try {
+    await streamRunner.play();
+  } catch (e) {
+    setError(`自定义脚本启动失败: ${e.message || e}`);
+  }
 }
 
 for (const chip of elements.scriptChips) {
