@@ -964,6 +964,18 @@ async function playCustomScript() {
         if (elements.editorStatus) {
           elements.editorStatus.dataset.state = finished ? "finished" : "running";
         }
+        // Mirror the runner's progress into the device-state plumbing
+        // so the existing step highlighter (renderEditorCard's
+        // .is-active scan) lights up the row at the same index. While
+        // custom scripts stream over R-frame HID rather than the
+        // firmware's STATUS channel, the runner is the source of
+        // truth for "what step am I on" — without this hook the
+        // editor would never see a live step.
+        deviceState = finished ? "idle" : "running";
+        devicePhase = "steps";
+        deviceRoutine = "custom";
+        deviceCurrentStep = stepIndex;
+        renderEditorCard();
       },
     });
   }
