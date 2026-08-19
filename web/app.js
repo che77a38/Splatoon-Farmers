@@ -200,6 +200,10 @@ let busy = false;
 let deviceState = "unknown";
 let devicePhase = "idle";
 let currentStep = 0;
+// Mirror of currentStep for the editor step highlighter — separated
+// so future logic (e.g. only highlight while not paused) doesn't have
+// to keep sharing a global.
+let deviceCurrentStep = 0;
 // Display step count tracks the *device's* current routine when known, else
 // falls back to the picker-selected script's declared count.
 let stepCount = SCRIPTS[selectedScript].stepCount;
@@ -316,6 +320,23 @@ function renderEditorCard() {
   if (elements.editorSteps) {
     elements.editorSteps.replaceChildren(...steps.map((step, idx) =>
       renderStepRow(step, idx)));
+    // Insert-target slot survives render — the row DOM is rebuilt
+    // fresh, so we re-apply is-insert-target to whichever row matches
+    // the stored index.
+    if (typeof editorInsertAfterIndex === "number"
+        && editorInsertAfterRowEl) {
+      // The previous row reference is stale (replaced via replaceChildren).
+      // Just clear; the user re-clicks the + on a row to arm again.
+      clearEditorInsertAfter();
+    }
+    // Mark the currently executing step as active so the operator can
+    // see what's running. Only applies when the device is on the same
+    // script that's loaded in the editor.
+    if (deviceState === "running" && deviceRoutine === "custom") {
+      const active = elements.editorSteps.querySelector(
+        `[data-step-idx="${deviceCurrentStep}"]`);
+      if (active) active.classList.add("is-active");
+    }
   }
 }
 
@@ -359,7 +380,68 @@ function renderStepRow(step, idx) {
   actions.appendChild(stepActionButton("✕", "del", idx, false, "editor-step-action--danger"));
   li.appendChild(actions);
 
+  // "+" inject button — opens the + 添加步骤 panel with this row as
+  // the insert position. The panel reads `editorInsertAfterIndex` and
+  // splices the new step at idx + 1 instead of pushing to the end.
+  const inject = document.createElement("button");
+  inject.type = "button";
+  inject.className = "editor-step-inject";
+  inject.dataset.testid = `editor-step-inject-${idx}`;
+  inject.title = "在此步骤之后插入新动作";
+  inject.textContent = "+";
+  inject.addEventListener("click", () => {
+    setEditorInsertAfter(idx, li, inject);
+  });
+  li.appendChild(inject);
+
   return li;
+}
+
+// Track which step gets the + (just-below) insert target. When the
+// operator opens + 添加步骤 and clicks a button there, the new step
+// is spliced into that slot. While a target is armed the corresponding
+// row is highlighted so the operator can see exactly where the new
+// step will land.
+let editorInsertAfterIndex = null;
+let editorInsertAfterRowEl = null;
+let editorInsertAfterButtonEl = null;
+
+function setEditorInsertAfter(idx, rowEl, btnEl) {
+  if (editorInsertAfterRowEl === rowEl) {
+    clearEditorInsertAfter();
+    return;
+  }
+  clearEditorInsertAfter();
+  editorInsertAfterIndex = idx + 1;
+  editorInsertAfterRowEl = rowEl;
+  editorInsertAfterButtonEl = btnEl;
+  if (rowEl) rowEl.classList.add("is-insert-target");
+  if (btnEl) btnEl.textContent = "▼";
+}
+
+function clearEditorInsertAfter() {
+  if (editorInsertAfterRowEl) {
+    editorInsertAfterRowEl.classList.remove("is-insert-target");
+  }
+  if (editorInsertAfterButtonEl) {
+    editorInsertAfterButtonEl.textContent = "+";
+  }
+  editorInsertAfterIndex = null;
+  editorInsertAfterRowEl = null;
+  editorInsertAfterButtonEl = null;
+}
+
+// Insert one step at the armed slot, or append if no slot is armed.
+// Called from the + 添加步骤 picker; the position is decided here.
+function insertStepWithArmedSlot(step) {
+  if (typeof editorInsertAfterIndex === "number"
+      && editorInsertAfterIndex >= 0
+      && editorInsertAfterIndex <= customScript.steps.length) {
+    customScript.steps.splice(editorInsertAfterIndex, 0, step);
+    clearEditorInsertAfter();
+  } else {
+    customScript.steps.push(step);
+  }
 }
 
 function stepActionButton(label, action, idx, disabled, modifier = "") {
@@ -481,6 +563,10 @@ function applyDeviceMessage(message, { syncPicker = false } = {}) {
   deviceState = message.state === "running" ? "running" : "idle";
   devicePhase = message.phase || "idle";
   currentStep = Number(message.step) || 0;
+  // Editor's running-step highlight reads this. Mirrors currentStep so
+  // the rendering loop can flag the row at the same index the firmware
+  // reports — the firmware emits `step` as 0-based.
+  deviceCurrentStep = currentStep;
   // Only the running routine's step count describes the device's current
   // progress. When the device is idle (or in a non-running phase that
   // doesn't move the progress bar), keep the value the picker pre-selected
@@ -1157,7 +1243,7 @@ if (elements.editorAddMenu && elements.editorAddLists.length) {
           step = getStepTemplate(tpl.id);
         }
         if (!step) return;
-        customScript.steps.push(step);
+        insertStepWithArmedSlot(step);
         renderEditorCard();
         scheduleAutoSave();
         elements.editorAddMenu.removeAttribute("open");

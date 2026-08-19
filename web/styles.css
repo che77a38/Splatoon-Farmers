@@ -1704,6 +1704,51 @@ footer {
   opacity: 0.4;
 }
 
+/* "+" inject button on each step row — open the + 添加步骤 panel
+   armed at this row's position. Lives at the row's far right; uses the
+   same outline accent as the active-step highlight so it reads as part
+   of the same action family. */
+.editor-step-inject {
+  margin-left: 6px;
+  padding: 2px 8px;
+  background: rgba(30, 224, 189, 0.05);
+  border: 1px solid rgba(30, 224, 189, 0.35);
+  color: var(--paper);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+  clip-path: polygon(2px 0, 100% 1px, calc(100% - 2px) 100%, 0 calc(100% - 3px));
+}
+
+.editor-step-inject:hover {
+  background: rgba(30, 224, 189, 0.18);
+}
+
+/* Row armed as the "+ insert after" target. A coral left border
+   plus a brighter background signal which step gets the new insertion. */
+.editor-step.is-insert-target {
+  background: rgba(255, 95, 74, 0.16);
+  border-left: 3px solid var(--coral);
+  padding-left: 8px;
+}
+
+/* Running-step highlight. The firmware emits `step` (0-based) in every
+   STATUS frame; renderEditorCard() pins this class on the matching row.
+   A gradient strip on the left + brighter outline makes it pop over
+   the muted editor step rows. */
+.editor-step.is-active {
+  background: linear-gradient(
+    90deg,
+    rgba(30, 224, 189, 0.22) 0,
+    rgba(30, 224, 189, 0.06) 18%,
+    transparent 60%
+  );
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+
 .editor-empty,
 .editor-recording-hint {
   position: relative;
